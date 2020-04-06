@@ -3,6 +3,8 @@ module Main exposing (..)
 import Browser
 import Html exposing (Html, Attribute, div, text)
 import Html.Attributes exposing (style)
+import Html.Events exposing (stopPropagationOn, onClick)
+import Json.Decode as Decode
 import String
 
 type Color = Red | Black
@@ -16,10 +18,17 @@ path = "/static/img/"
 main =
   Browser.sandbox { init = init, update = update, view = view }
 
-type alias Model = List Piece
+type alias Model =
+  { board : List Piece
+  , selected : Maybe Piece
+  }
 
 init : Model
 init =
+  { board = initialBoard, selected = Nothing }
+
+initialBoard : List Piece
+initialBoard =
   -- Black
   -- Back row
   [ Piece Black Chariot 'a' 10
@@ -63,34 +72,78 @@ init =
   , Piece Red Chariot 'i' 1
   ]
 
-type Msg = NoOp
+type Msg
+  = Select Piece
+  | Deselect
 
 update : Msg -> Model -> Model
-update msg model =
-  model
+update msg ({board, selected} as model) =
+  case msg of
+    Select pce ->
+      { board = board, selected = Just pce }
+    Deselect ->
+      { board = board, selected = Nothing }
+
+stopPropOnClick : msg -> Attribute msg
+stopPropOnClick msg =
+  stopPropagationOn "click" (Decode.succeed (msg, True))
 
 view : Model -> Html Msg
 view model =
-  board model
+  viewBoard model
 
-board model =
+viewBoard : Model -> Html Msg
+viewBoard { board, selected} =
   div
     [ style "position" "absolute"
     , style "background-image" (imgUrl "board.jpg")
     , style "width" "521px"
     , style "height" "577px"
+    , onClick Deselect
     ]
-    (List.map piece model)
+    (List.map (piece selected) board)
 
-piece (Piece color pce file rank) =
+piece : Maybe Piece -> Piece -> Html Msg
+piece selected (Piece color pceType file rank as pce) =
+  let isSelected = selected == Just pce in
   div
-    (pos file rank ++
+    (pos file rank
+    ++
     [ style "position" "absolute"
     , style "width" "57px"
     , style "height" "57px"
-    , style "background-image" (imgUrl (icon color pce))
-    ])
+    , style "background-image" (imgUrl (icon color pceType))
+    , style "cursor" "pointer"
+    , style "border-radius" "100%" -- stops cursor looking wrong when off piece
+    , stopPropOnClick (Select pce)
+    ]
+    ++
+    if isSelected then
+      [ style "border-width" "2px"
+      , style "border-style" "solid"
+      , style "border-color" "red"
+      ]
+    else []
+    )
     []
+
+moves : Piece -> List Piece
+moves (Piece color pce file rank) =
+  case pce of
+    Advisor ->
+      [Piece color Advisor file rank]
+    Cannon ->
+      [Piece color Cannon file rank]
+    Chariot ->
+      [Piece color Cannon file rank]
+    Elephant ->
+      [Piece color Elephant file rank]
+    General ->
+      [Piece color General file rank]
+    Horse ->
+      [Piece color Horse file rank]
+    Soldier ->
+      [Piece color Soldier file rank]
 
 icon : Color -> PieceType -> String
 icon color pce =
@@ -114,11 +167,19 @@ icon color pce =
 -- Pieces are 57x57px
 pos : Char -> Int -> List (Attribute msg)
 pos file rank =
-  let file_ = Char.toCode file - Char.toCode 'a' in
-  let rank_ = rank - 1 in
+  let file_ = toInt file in
+  let rank_ = 10 - rank in
   [ style "top" (String.fromInt (rank_ * 58) ++ "px")
   , style "left" (String.fromInt (file_ * 58) ++ "px")
   ]
+
+toInt : Char -> Int
+toInt c =
+  Char.toCode c - Char.toCode 'a'
+
+fromInt : Int -> Char
+fromInt c =
+  Char.fromCode (Char.toCode 'a' + c)
 
 imgUrl : String -> String
 imgUrl u =
