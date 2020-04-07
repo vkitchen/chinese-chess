@@ -1,7 +1,7 @@
 module Main exposing (..)
 
 import Browser
-import Html exposing (Html, Attribute, div, text)
+import Html exposing (Html, Attribute, div, p, text)
 import Html.Attributes exposing (style)
 import Html.Events exposing (stopPropagationOn, onClick)
 import Json.Decode as Decode
@@ -99,7 +99,46 @@ stopPropOnClick msg =
 
 view : Model -> Html Msg
 view model =
-  viewBoard model
+  div
+    []
+    [ div
+        [ style "position" "relative"
+        , style "width" "521px"
+        , style "height" "577px"
+        , style "display" "inline-block"
+        ]
+        [ viewBoard model ]
+    , div
+        [ style "display" "inline-block"
+        , style "vertical-align" "top"
+        , style "width" "300px"
+        , style "padding" "10px"
+        ]
+        [ p [] [ text "Known bugs: Generals shouldn't be able to face each other" ]
+        , p [] [ text "Known bugs: No detection of game end states" ]
+        , case model.selected of
+            Just pce -> pieceInfo pce
+            Nothing -> text "*No piece selected*"
+        ]
+    ]
+
+pieceInfo : Piece -> Html Msg
+pieceInfo (Piece _ pceType _ _) =
+  case pceType of
+    Advisor ->
+      text "Advisor (仕/士): Moves and captures one point diagonally. May not leave the palace"
+    Cannon ->
+      text "Cannon (炮/砲): Moves any number orthogonally. Captures by 'firing' over an intervening piece of own or enemy colour"
+    Chariot ->
+      text "Chariot (俥/車): Moves and captures any number orthogonally"
+    Elephant ->
+      text "Elephant (相/象): Moves and captures two points diagonally. The Elephant does not jump"
+    General ->
+      text "General (帥/將): Moves and captures one point orthogonally. May not leave the palace. And may not face the opposing general otherwise they will perform the 'flying general' (飛將) move and cross the entire board to capture the enemy general"
+    Horse ->
+      text "Horse (傌/馬): Moves and captures in a two step move with one point moved orthogonally and then one point diagonally. The horse does not jump. Blocking a horse is known as 'Hobbling the horse's leg' (蹩馬腿)"
+    Soldier ->
+      text "Soldier (兵/卒): Moves and captures by advancing one point. Upon crossing the river can move and capture horizontally one point"
 
 viewBoard : Model -> Html Msg
 viewBoard { board, selected} =
