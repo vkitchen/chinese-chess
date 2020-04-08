@@ -1,11 +1,16 @@
 module Main exposing (..)
 
-import Browser
-import Html exposing (Html, Attribute, div, p, text)
+import Browser exposing (Document, UrlRequest)
+import Browser.Navigation as Nav
+import Html exposing (Html, Attribute, div, p, input, button, text)
 import Html.Attributes exposing (style)
-import Html.Events exposing (stopPropagationOn, onClick)
+import Html.Events exposing (stopPropagationOn, onClick, onInput)
 import Json.Decode as Decode
 import String
+import Url exposing (Url)
+import Random
+import Uuid.Barebones exposing (uuidStringGenerator)
+import Debug
 
 type Color = Red | Black
 type PieceType = Advisor | Cannon | Chariot | Elephant | General | Horse | Soldier
@@ -16,16 +21,43 @@ type Piece = Piece Color PieceType Char Int
 path = "/static/img/"
 
 main =
-  Browser.sandbox { init = init, update = update, view = view }
+  Browser.application
+    { init = init
+    , update = update
+    , subscriptions = subscriptions
+    , view = view
+    , onUrlRequest = onUrlRequest
+    , onUrlChange = onUrlChange
+    }
 
 type alias Model =
-  { board : List Piece
+  { key : Nav.Key
+  , board : List Piece
   , selected : Maybe Piece
+  , showLobby : Bool -- TODO lobby is derived off of roomCode ?
+  , roomCode : Maybe String
+  , player : Int
+  , input : String
   }
 
-init : Model
-init =
-  { board = initialBoard, selected = Nothing }
+init : () -> Url -> Nav.Key -> ( Model, Cmd Msg )
+init _ url key =
+  (
+  { key = key
+  , board = initialBoard
+  , selected = Nothing
+  , showLobby =
+      case url.fragment of
+        Nothing -> True
+        Just _ -> False
+  , roomCode = url.fragment
+  , player =
+      case url.fragment of
+        Nothing -> 1
+        Just _ -> 2
+  , input = ""
+  }
+  , Cmd.none )
 
 initialBoard : List Piece
 initialBoard =
@@ -73,34 +105,61 @@ initialBoard =
   ]
 
 type Msg
-  = Select Piece
+  = NoOp -- ILLEGAL STATE (here to circumvent the type system)
+  | Select Piece
   | Deselect
   | Move Piece
+  | CreateRoom
+  | JoinRoom String
+  | NewRoom String
+  | Input String
 
-update : Msg -> Model -> Model
-update msg ({board, selected} as model) =
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg ({key, board, selected} as model) =
   case msg of
+    NoOp ->
+      ( model, Cmd.none )
     Select pce ->
-      { board = board, selected = Just pce }
+      ( { model | selected = Just pce }, Cmd.none )
     Deselect ->
-      { board = board, selected = Nothing }
+      ( { model | selected = Nothing }, Cmd.none )
     Move pce_ ->
       case selected of
         Just pce ->
           -- TODO insert back into dropped spot?
           -- mildly annoying redraw bug with dom moving around
-          { board = List.filter (\p -> p /= pce) board ++ [pce_], selected = Nothing }
+          ( { model | board = List.filter (\p -> p /= pce) board ++ [pce_], selected = Nothing }, Cmd.none )
         Nothing ->
-          { board = board, selected = selected } -- IMPOSSIBLE STATE
+          ( model , Cmd.none ) -- IMPOSSIBLE STATE
+    CreateRoom ->
+      ( { model | showLobby = False, player = 1 }, Random.generate NewRoom uuidStringGenerator )
+    JoinRoom newRoom ->
+      ( { model | input = "", roomCode = Just newRoom, showLobby = False, player = 2 }, Nav.replaceUrl key ("#" ++ newRoom) )
+    NewRoom newRoom ->
+      ( { model | roomCode = Just newRoom }, Nav.replaceUrl key ("#" ++ newRoom) )
+    Input npt ->
+      ( { model | input = npt }, Cmd.none)
+
+subscriptions : model -> Sub msg
+subscriptions model =
+  Sub.none
+
+onUrlRequest : UrlRequest -> Msg
+onUrlRequest _ =
+  NoOp
+
+onUrlChange : Url -> Msg
+onUrlChange _ =
+  NoOp
 
 stopPropOnClick : msg -> Attribute msg
 stopPropOnClick msg =
   stopPropagationOn "click" (Decode.succeed (msg, True))
 
-view : Model -> Html Msg
+view : Model -> Document Msg
 view model =
-  div
-    []
+  { title = "Chinese Chess - Vaughan.Kitchen"
+  , body =
     [ div
         [ style "position" "relative"
         , style "width" "521px"
@@ -116,11 +175,40 @@ view model =
         ]
         [ p [] [ text "Known bugs: Generals shouldn't be able to face each other" ]
         , p [] [ text "Known bugs: No detection of game end states" ]
+        , p [] [ text "Known bugs: Refreshing the page breaks things (turns you into black player)" ]
         , case model.selected of
             Just pce -> pieceInfo pce
             Nothing -> text "*No piece selected*"
         ]
+    , if model.showLobby then
+        div
+          [ style "position" "absolute"
+          , style "top" "0"
+          , style "right" "0"
+          , style "bottom" "0"
+          , style "left" "0"
+          , style "background-color" "rgba(0, 0, 0, 0.4)"
+          ]
+          [ div
+              [ style "position" "absolute"
+              , style "top" "50%"
+              , style "left" "50%"
+              , style "transform" "translate(-50%, -50%)"
+              , style "background-color" "white"
+              , style "padding" "16px"
+              ]
+              [ p [] [ button [ onClick CreateRoom ] [ text "Create a new room" ] ]
+              , p [] [ text "..OR.." ]
+              , p []
+                  [ input [ onInput Input ] []
+                  , button [ onClick (JoinRoom model.input) ] [ text "Join Room" ]
+                  ]
+              ]
+          ]
+      else
+        div [] []
     ]
+  }
 
 pieceInfo : Piece -> Html Msg
 pieceInfo (Piece _ pceType _ _) =
