@@ -49,7 +49,10 @@ init : () -> Url -> Nav.Key -> ( Model, Cmd Msg )
 init _ url key =
   (
   { key = key
-  , board = initialBoard
+  , board = 
+      case url.fragment of
+        Nothing -> initialBoard
+        Just _ -> rotateBoard initialBoard
   , selected = Nothing
   , showLobby =
       case url.fragment of
@@ -63,6 +66,10 @@ init _ url key =
   , input = ""
   }
   , Cmd.none )
+
+rotateBoard : List Piece -> List Piece
+rotateBoard board =
+  List.map (\(Piece c p f r) -> Piece c p (fromInt (8 - toInt f)) (11 - r)) board
 
 initialBoard : List Piece
 initialBoard =
@@ -131,16 +138,21 @@ update msg ({key, board, selected} as model) =
       ( { model | selected = Just pce }, Cmd.none )
     Deselect ->
       ( { model | selected = Nothing }, Cmd.none )
-    Move pce_ ->
+    Move (Piece _ _ f r as pce_) ->
       case selected of
         Just pce ->
           -- TODO insert back into dropped spot?
           -- mildly annoying redraw bug with dom moving around
-          let newBoard = List.filter (\p -> p /= pce) board ++ [pce_] in
+          let newBoard = List.filter (\(Piece _ _ f_ r_) -> not (f == f_ && r == r_)) board in
+          let newBoard_ = List.filter (\p -> p /= pce) newBoard ++ [pce_] in
+          let rBoard = case model.player of
+                1 -> newBoard_
+                _ -> rotateBoard newBoard_
+          in
           case model.roomCode of
             Just rm ->
               let url = "/rooms/" ++ rm ++ ".json" in
-              ( { model | board = newBoard, selected = Nothing }, Http.post { url = url, body = Http.stringBody "application/json" (encodeBoard newBoard), expect = Http.expectWhatever PostSent } )
+              ( { model | board = newBoard_, selected = Nothing }, Http.post { url = url, body = Http.stringBody "application/json" (encodeBoard rBoard), expect = Http.expectWhatever PostSent } )
             Nothing ->
               ( { model | board = newBoard, selected = Nothing }, Cmd.none ) -- IMPOSSIBLE STATE
         Nothing ->
@@ -148,7 +160,7 @@ update msg ({key, board, selected} as model) =
     CreateRoom ->
       ( { model | showLobby = False, player = 1 }, Random.generate NewRoom uuidStringGenerator )
     JoinRoom newRoom ->
-      ( { model | input = "", roomCode = Just newRoom, showLobby = False, player = 2 }, Nav.replaceUrl key ("#" ++ newRoom) )
+      ( { model | board = rotateBoard board, input = "", roomCode = Just newRoom, showLobby = False, player = 2 }, Nav.replaceUrl key ("#" ++ newRoom) )
     NewRoom newRoom ->
       ( { model | roomCode = Just newRoom }, Nav.replaceUrl key ("#" ++ newRoom) )
     Input npt ->
@@ -161,7 +173,12 @@ update msg ({key, board, selected} as model) =
         Nothing ->
           ( model, Cmd.none ) -- waiting for room creation/join
     UpdateBoard (Ok brd) ->
-      ( { model | board = List.map decodePiece brd }, Cmd.none )
+      let newBoard = List.map decodePiece brd in
+      let rBoard = case model.player of
+            1 -> newBoard
+            _ -> rotateBoard newBoard
+      in
+      ( { model | board = rBoard }, Cmd.none )
     UpdateBoard (Err httpError) -> -- TODO should do something
       ( model, Cmd.none )
     PostSent _ ->
@@ -254,7 +271,7 @@ view model =
         , style "height" "577px"
         , style "display" "inline-block"
         ]
-        [ viewBoard model ]
+        [ viewBoard model.board model.selected ]
     , div
         [ style "display" "inline-block"
         , style "vertical-align" "top"
@@ -316,8 +333,8 @@ pieceInfo (Piece _ pceType _ _) =
     Soldier ->
       text "Soldier (兵/卒): Moves and captures by advancing one point. Upon crossing the river can move and capture horizontally one point"
 
-viewBoard : Model -> Html Msg
-viewBoard { board, selected} =
+viewBoard : List Piece -> Maybe Piece -> Html Msg
+viewBoard board selected =
   div
     [ style "position" "absolute"
     , style "background-image" (imgUrl "board.jpg")
