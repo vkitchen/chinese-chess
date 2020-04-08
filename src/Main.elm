@@ -279,8 +279,11 @@ view model =
         , style "padding" "10px"
         ]
         [ p [] [ text "Known bugs: Generals shouldn't be able to face each other" ]
-        , p [] [ text "Known bugs: No detection of game end states" ]
+        , p [] [ text "Known bugs: No detection of game end states (including check)" ]
         , p [] [ text "Known bugs: Refreshing the page breaks things (turns you into black player)" ]
+        , p [] [ text "Known bugs: There is no turn alteration code" ]
+        , p [] [ text "Known bugs: Moving a piece rapidly can duplicate it" ]
+        , p [] [ text "Known bugs: Pieces flicker, and can sometimes appear to move back after performing a move" ]
         , case model.selected of
             Just pce -> pieceInfo pce
             Nothing -> text "*No piece selected*"
@@ -325,7 +328,7 @@ pieceInfo (Piece _ pceType _ _) =
     Chariot ->
       text "Chariot (俥/車): Moves and captures any number orthogonally"
     Elephant ->
-      text "Elephant (相/象): Moves and captures two points diagonally. The Elephant does not jump"
+      text "Elephant (相/象): Moves and captures two points diagonally. The Elephant does not jump. The Elephant cannot cross the river thus it serves mainly as a defensive piece"
     General ->
       text "General (帥/將): Moves and captures one point orthogonally. May not leave the palace. And may not face the opposing general otherwise they will perform the 'flying general' (飛將) move and cross the entire board to capture the enemy general"
     Horse ->
@@ -449,7 +452,7 @@ moves board (Piece color pceType file rank as pce) =
       ]
     )
     |> List.filterMap pruneOffBoard
-    |> List.filterMap pruneOutOfPalace
+    |> List.filterMap pruneOutOfZone
     |> List.filterMap (pruneNotAcrossRiver pce)
     |> List.filterMap (pruneLandOnTeam board)
     |> List.filterMap (pruneBlocked board pce)
@@ -464,12 +467,17 @@ pruneOffBoard (Piece color pceType file rank as pce) =
   else
     Just pce
 
-pruneOutOfPalace : Piece -> Maybe Piece
-pruneOutOfPalace (Piece color pceType file rank as pce) =
+pruneOutOfZone : Piece -> Maybe Piece
+pruneOutOfZone (Piece color pceType file rank as pce) =
   if pceType == Advisor || pceType == General then
     if not (3 <= toInt file && toInt file <= 5) then
       Nothing
     else if not (1 <= rank && rank <= 3) then
+      Nothing
+    else
+      Just pce
+  else if pceType == Elephant then
+    if rank > 5 then -- across the river
       Nothing
     else
       Just pce
