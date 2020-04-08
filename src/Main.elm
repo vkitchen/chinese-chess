@@ -271,7 +271,7 @@ view model =
         , style "height" "577px"
         , style "display" "inline-block"
         ]
-        [ viewBoard model.board model.selected ]
+        [ viewBoard model ]
     , div
         [ style "display" "inline-block"
         , style "vertical-align" "top"
@@ -333,8 +333,8 @@ pieceInfo (Piece _ pceType _ _) =
     Soldier ->
       text "Soldier (兵/卒): Moves and captures by advancing one point. Upon crossing the river can move and capture horizontally one point"
 
-viewBoard : List Piece -> Maybe Piece -> Html Msg
-viewBoard board selected =
+viewBoard : Model -> Html Msg
+viewBoard {player, board, selected} =
   div
     [ style "position" "absolute"
     , style "background-image" (imgUrl "board.jpg")
@@ -342,12 +342,16 @@ viewBoard board selected =
     , style "height" "577px"
     , onClick Deselect
     ]
-    ((List.map (viewPiece selected) board)
+    ((List.map (viewPiece player selected) board)
     ++ viewMoves board selected
     )
 
-viewPiece : Maybe Piece -> Piece -> Html Msg
-viewPiece selected (Piece color pceType file rank as pce) =
+viewPiece : Int -> Maybe Piece -> Piece -> Html Msg
+viewPiece player selected (Piece color pceType file rank as pce) =
+  let playerColor = case player of
+        1 -> Red
+        _ -> Black
+  in
   let isSelected = selected == Just pce in
   div
     (pos 57 file rank
@@ -358,8 +362,12 @@ viewPiece selected (Piece color pceType file rank as pce) =
     , style "background-image" (imgUrl (icon color pceType))
     , style "cursor" "pointer"
     , style "border-radius" "100%" -- stops cursor looking wrong when off piece
-    , stopPropOnClick (Select pce)
     ]
+    ++
+    if playerColor == color then
+      [ stopPropOnClick (Select pce) ]
+    else
+      []
     ++
     if isSelected then
       [ style "border" "2px solid green" ]
