@@ -11,6 +11,10 @@ import Url exposing (Url)
 import Random
 import Uuid.Barebones exposing (uuidStringGenerator)
 import Debug
+import Time
+import Http
+import Json.Decode as D
+import Json.Encode as E
 
 type Color = Red | Black
 type PieceType = Advisor | Cannon | Chariot | Elephant | General | Horse | Soldier
@@ -18,7 +22,8 @@ type PieceType = Advisor | Cannon | Chariot | Elephant | General | Horse | Soldi
 type Piece = Piece Color PieceType Char Int
 
 -- Where is the game rooted in order to load assets
-path = "/static/img/"
+path = "/games/chinese-chess/"
+imgPath = path ++ "static/img/"
 
 main =
   Browser.application
@@ -113,6 +118,9 @@ type Msg
   | JoinRoom String
   | NewRoom String
   | Input String
+  | Tick Time.Posix
+  | UpdateBoard (Result Http.Error (List String))
+  | PostSent (Result Http.Error ())
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg ({key, board, selected} as model) =
@@ -128,7 +136,13 @@ update msg ({key, board, selected} as model) =
         Just pce ->
           -- TODO insert back into dropped spot?
           -- mildly annoying redraw bug with dom moving around
-          ( { model | board = List.filter (\p -> p /= pce) board ++ [pce_], selected = Nothing }, Cmd.none )
+          let newBoard = List.filter (\p -> p /= pce) board ++ [pce_] in
+          case model.roomCode of
+            Just rm ->
+              let url = "/rooms/" ++ rm ++ ".json" in
+              ( { model | board = newBoard, selected = Nothing }, Http.post { url = url, body = Http.stringBody "application/json" (encodeBoard newBoard), expect = Http.expectWhatever PostSent } )
+            Nothing ->
+              ( { model | board = newBoard, selected = Nothing }, Cmd.none ) -- IMPOSSIBLE STATE
         Nothing ->
           ( model , Cmd.none ) -- IMPOSSIBLE STATE
     CreateRoom ->
@@ -139,10 +153,84 @@ update msg ({key, board, selected} as model) =
       ( { model | roomCode = Just newRoom }, Nav.replaceUrl key ("#" ++ newRoom) )
     Input npt ->
       ( { model | input = npt }, Cmd.none)
+    Tick _ ->
+      case model.roomCode of
+        Just rm ->
+          let url = "/rooms/" ++ rm ++ ".json" in
+          ( model, Http.get { url = url, expect = Http.expectJson UpdateBoard decodeBoardJson } )
+        Nothing ->
+          ( model, Cmd.none ) -- waiting for room creation/join
+    UpdateBoard (Ok brd) ->
+      ( { model | board = List.map decodePiece brd }, Cmd.none )
+    UpdateBoard (Err httpError) -> -- TODO should do something
+      ( model, Cmd.none )
+    PostSent _ ->
+      ( model, Cmd.none )
 
-subscriptions : model -> Sub msg
+encodeBoard : List Piece -> String
+encodeBoard board =
+  E.encode 0 (E.list E.string (List.map encodePiece board))
+
+encodePiece : Piece -> String
+encodePiece (Piece color pceType file rank) =
+  let color_ = case color of
+        Black -> "Black"
+        Red -> "Red"
+  in
+  color_ ++ ":" ++ encodePieceType pceType ++ ":" ++ String.fromChar file ++ ":" ++ String.fromInt rank
+
+decodePiece : String -> Piece
+decodePiece pce =
+  let segs = String.split ":" pce in
+  case segs of
+    clr :: pceType :: file :: rank :: [] ->
+      let clr_ = case clr of
+            "Black" -> Black
+            "Red" -> Red
+            _ -> Red -- IMPOSSIBLE STATE
+      in
+      let file_ = case String.uncons file of
+            Just (f, _) -> f
+            Nothing -> 'a'
+      in
+      let rank_ = case String.toInt rank of
+            Just r -> r
+            Nothing -> 1
+      in
+      Piece clr_ (decodePieceType pceType) file_ rank_
+    _ ->
+      Piece Red Soldier 'a' 1 -- IMPOSSIBLE STATE
+
+encodePieceType : PieceType -> String
+encodePieceType pceType =
+  case pceType of
+    Advisor -> "Advisor"
+    Cannon -> "Cannon"
+    Chariot -> "Chariot"
+    Elephant -> "Elephant"
+    General -> "General"
+    Horse -> "Horse"
+    Soldier -> "Soldier"
+
+decodePieceType : String -> PieceType
+decodePieceType pceType =
+  case pceType of
+    "Advisor" -> Advisor
+    "Cannon" -> Cannon
+    "Chariot" -> Chariot
+    "Elephant" -> Elephant
+    "General" -> General
+    "Horse" -> Horse
+    "Soldier" -> Soldier
+    _ -> Soldier -- IMPOSSIBLE STATE
+
+decodeBoardJson : D.Decoder (List String)
+decodeBoardJson =
+  D.list D.string
+
+subscriptions : model -> Sub Msg
 subscriptions model =
-  Sub.none
+  Time.every 1000 Tick
 
 onUrlRequest : UrlRequest -> Msg
 onUrlRequest _ =
@@ -609,4 +697,4 @@ fromInt c =
 
 imgUrl : String -> String
 imgUrl u =
-  "url('" ++ path ++ u ++ "')"
+  "url('" ++ imgPath ++ u ++ "')"
