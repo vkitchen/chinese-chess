@@ -2,14 +2,14 @@ module Main exposing (..)
 
 import Browser exposing (Document, UrlRequest)
 import Browser.Navigation as Nav
-import Html exposing (Html, Attribute, div, p, input, button, text)
-import Html.Attributes exposing (style)
+import Html exposing (Html, Attribute, div, p, input, button, br, text)
+import Html.Attributes exposing (style, placeholder)
 import Html.Events exposing (stopPropagationOn, onClick, onInput)
 import Json.Decode as Decode
 import String
 import Url exposing (Url)
 import Random
-import Uuid.Barebones exposing (uuidStringGenerator)
+import Uuid.Barebones exposing (uuidStringGenerator, isValidUuid)
 import Debug
 import Time
 import Http
@@ -18,58 +18,140 @@ import Json.Encode as E
 
 type Color = Red | Black
 type PieceType = Advisor | Cannon | Chariot | Elephant | General | Horse | Soldier
--- color piece position file rank
+-- color piece file rank
 type Piece = Piece Color PieceType Char Int
 
--- Where is the game rooted in order to load assets
-path = "/games/chinese-chess/"
-imgPath = path ++ "static/img/"
+pieceTypeToString : PieceType -> String
+pieceTypeToString pceType =
+  case pceType of
+    Advisor -> "Advisor"
+    Cannon -> "Cannon"
+    Chariot -> "Chariot"
+    Elephant -> "Elephant"
+    General -> "General"
+    Horse -> "Horse"
+    Soldier -> "Soldier"
+
+pieceTypeFromString : String -> PieceType
+pieceTypeFromString pceType =
+  case pceType of
+    "Advisor" -> Advisor
+    "Cannon" -> Cannon
+    "Chariot" -> Chariot
+    "Elephant" -> Elephant
+    "General" -> General
+    "Horse" -> Horse
+    _ -> Soldier
+
+pieceToString : Piece -> String
+pieceToString (Piece color pceType file rank) =
+  let color_ = case color of
+        Black -> "Black"
+        Red -> "Red"
+  in
+  color_
+  ++ ":" ++ pieceTypeToString pceType
+  ++ ":" ++ String.fromChar file
+  ++ ":" ++ String.fromInt rank
+
+pieceFromString : String -> Piece
+pieceFromString pce =
+  case String.split ":" pce of
+    clr :: pceType :: file :: rank :: [] ->
+      Piece
+        (case clr of
+          "Black" -> Black
+          _ -> Red
+        )
+        (pieceTypeFromString pceType)
+        (case String.uncons file of
+          Just (f, _) -> f
+          Nothing -> 'a'
+        )
+        (case String.toInt rank of
+            Just r -> r
+            Nothing -> 1
+        )
+    _ ->
+      Piece Red Soldier 'a' 1 -- IMPOSSIBLE
+
+type GameType = Network | Local | AI
+type JoinState = GameTypeSelection | Lobby | WaitingOpponent | Playing
+
+rootPath = "/games/chinese-chess/"
+imgPath = rootPath ++ "static/img/"
 
 main =
   Browser.application
     { init = init
-    , update = update
     , subscriptions = subscriptions
+    , update = update
     , view = view
-    , onUrlRequest = onUrlRequest
-    , onUrlChange = onUrlChange
+    , onUrlRequest = (\_ -> NoOp)
+    , onUrlChange = (\_ -> NoOp)
     }
 
 type alias Model =
-  { key : Nav.Key
-  , board : List Piece
-  , selected : Maybe Piece
-  , showLobby : Bool -- TODO lobby is derived off of roomCode ?
+  { error : Maybe String
+  , failedNetReq : Int
+  , key : Nav.Key
+  , userId : String
+  , gameType : Maybe GameType
+  , joinState : JoinState
   , roomCode : Maybe String
-  , player : Int
+  , board : List Piece
+  , players : List String
+  , turnOrder : Int
+  , currentTurn : Int
+  , selected : Maybe Piece
   , input : String
   }
 
-init : () -> Url -> Nav.Key -> ( Model, Cmd Msg )
-init _ url key =
-  (
-  { key = key
-  , board = 
-      case url.fragment of
-        Nothing -> initialBoard
-        Just _ -> rotateBoard initialBoard
-  , selected = Nothing
-  , showLobby =
-      case url.fragment of
-        Nothing -> True
-        Just _ -> False
-  , roomCode = url.fragment
-  , player =
-      case url.fragment of
-        Nothing -> 1
-        Just _ -> 2
-  , input = ""
+type alias GameState =
+  { players: List String
+  , currentTurn : Int
+  , boardStringy: List String
   }
-  , Cmd.none )
 
-rotateBoard : List Piece -> List Piece
-rotateBoard board =
-  List.map (\(Piece c p f r) -> Piece c p (fromInt (8 - toInt f)) (11 - r)) board
+init : String -> Url -> Nav.Key -> ( Model, Cmd Msg )
+init uid url key =
+  let defaultModel =
+        { error = Nothing
+        , failedNetReq = 0
+        , key = key
+        , userId = uid
+        , gameType = Nothing
+        , joinState = GameTypeSelection
+        , roomCode = Nothing
+        , board = initialBoard
+        , players = []
+        , turnOrder = 0
+        , currentTurn = 1
+        , selected = Nothing
+        , input = ""
+        }
+  in
+  -- Specialisation of JoinRoom update method
+  case url.fragment of
+    Nothing ->
+      ( defaultModel, Cmd.none )
+    Just roomCode ->
+      if isValidUuid roomCode then
+        let url_ = "/rooms/" ++ roomCode ++ ".json" in
+        ( { defaultModel
+              | gameType = Just Network
+              , joinState = Lobby
+              , roomCode = Just roomCode
+          }
+        , Http.get
+            { url = url_
+            , expect = Http.expectJson RoomReceived decodeStateJson
+            }
+        )
+      else
+        ( { defaultModel | error = Just "Invalid room code" }
+        , Cmd.none
+        )
 
 initialBoard : List Piece
 initialBoard =
@@ -116,146 +198,294 @@ initialBoard =
   , Piece Red Chariot 'i' 1
   ]
 
+subscriptions : model -> Sub Msg
+subscriptions model =
+  Time.every 1000 Tick
+
 type Msg
-  = NoOp -- ILLEGAL STATE (here to circumvent the type system)
-  | Select Piece
-  | Deselect
-  | Move Piece
-  | CreateRoom
-  | JoinRoom String
+  = NoOp
+  | ReloadPage
+  | SelectGame GameType
+  | DetermineTurnOrder Int
   | NewRoom String
+  | CreateRoom
+  | RoomCreated (Result Http.Error ())
   | Input String
+  | JoinRoom String
+  | RoomReceived (Result Http.Error GameState)
+  | RoomJoined (Result Http.Error ())
   | Tick Time.Posix
-  | UpdateBoard (Result Http.Error (List String))
-  | PostSent (Result Http.Error ())
+  | UpdateGameState (Result Http.Error GameState)
+  | SelectPiece Piece
+  | DeselectPiece
+  | MovePiece Piece
+  | GameStateSent (Result Http.Error ())
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg ({key, board, selected} as model) =
   case msg of
     NoOp ->
       ( model, Cmd.none )
-    Select pce ->
+    ReloadPage ->
+      ( model, Nav.reload )
+    SelectGame gameType ->
+      case gameType of
+        Network ->
+          ( { model | gameType = Just Network, joinState = Lobby }
+          , Random.generate DetermineTurnOrder (Random.int 1 2)
+          )
+        Local ->
+          ( { model | gameType = Just Local, joinState = Playing }, Cmd.none )
+        AI ->
+          ( { model | error = Just "AI mode not yet implemented" }, Cmd.none )
+    -- For host only. Redetermines on connection
+    DetermineTurnOrder trnOrd ->
+      ( { model | turnOrder = trnOrd }, Cmd.none )
+    CreateRoom ->
+      case model.turnOrder of
+        1 -> 
+          ( { model | players = [ model.userId, "" ] }
+          , Random.generate NewRoom uuidStringGenerator
+          )
+        _ ->
+          ( { model | players = [ "", model.userId ] }
+          , Random.generate NewRoom uuidStringGenerator
+          )
+    NewRoom newRoom ->
+      let url = "/rooms/" ++ newRoom ++ ".json" in
+      ( { model | roomCode = Just newRoom }
+        , Http.post
+            { url = url
+            , body = Http.jsonBody (encodeStateJson model)
+            , expect = Http.expectWhatever RoomCreated
+            }
+      )
+    RoomCreated (Ok _) ->
+      case model.roomCode of
+        Just rm ->
+          ( { model | joinState = WaitingOpponent }
+          , Nav.replaceUrl key ("#" ++ rm)
+          )
+        _ ->
+          ( model, Cmd.none ) -- IMPOSSIBLE
+    RoomCreated (Err e) ->
+      ( { model | error = Just ("Failed to create room." ++ netErrToString e) }
+      , Cmd.none
+      )
+    Input npt ->
+      ( { model | input = npt }, Cmd.none)
+    JoinRoom newRoom ->
+      if isValidUuid newRoom then
+        let url = "/rooms/" ++ newRoom ++ ".json" in
+        ( { model | input = "", roomCode = Just newRoom }
+        , Http.get
+            { url = url
+            , expect = Http.expectJson RoomReceived decodeStateJson
+            }
+        )
+      else
+        ( { model | error = Just "Invalid room code" }
+        , Cmd.none
+        )
+    RoomReceived (Ok {players, currentTurn, boardStringy}) ->
+      let url = "/rooms/" ++ (case model.roomCode of
+              Just rm -> rm
+              Nothing -> "" -- IMPOSSIBLE
+            ) ++ ".json"
+      in
+      let (firstPlayer, secondPlayer) = case players of
+            fp :: sp :: _  -> (fp, sp)
+            _ -> ("nope", "nope") -- Will trigger a join error later
+      in
+      -- Could probably be a bit cleaner
+      if firstPlayer == model.userId then
+        ({ model
+            | failedNetReq = 0
+            , joinState = Playing
+            , players = players
+            , turnOrder = 1
+            , currentTurn = currentTurn
+            , board = List.map pieceFromString boardStringy
+        }, Cmd.none )
+      else if secondPlayer == model.userId then
+        ({ model
+            | failedNetReq = 0
+            , joinState = Playing
+            , players = players
+            , turnOrder = 2
+            , currentTurn = currentTurn
+            , board = List.map pieceFromString boardStringy
+        }, Cmd.none )
+      else if firstPlayer == "" then
+        let newModel = 
+              { model
+                | players = [ model.userId, secondPlayer ]
+                , turnOrder = 1
+              }
+        in
+        ( newModel, Http.post
+              { url = url
+              , body = Http.jsonBody (encodeStateJson newModel)
+              , expect = Http.expectWhatever RoomJoined
+              }
+        )
+      else if secondPlayer == "" then
+        let newModel =
+              { model
+                | players = [ firstPlayer, model.userId ]
+                , turnOrder = 2
+              }
+        in
+        ( newModel , Http.post
+              { url = url
+              , body = Http.jsonBody (encodeStateJson newModel)
+              , expect = Http.expectWhatever RoomJoined
+              }
+        )
+      else
+        ( { model | error = Just "Room appears to already be full" }
+        , Cmd.none
+        )
+    RoomReceived (Err e) ->
+      ( { model | error = Just ("Failed to join room." ++ netErrToString e) }
+      , Cmd.none
+      )
+    RoomJoined (Ok _) ->
+      case model.roomCode of
+        Just rm ->
+          ( { model | joinState = Playing }
+          , Nav.replaceUrl key ("#" ++ rm)
+          )
+        _ ->
+          ( model, Cmd.none ) -- IMPOSSIBLE
+    RoomJoined (Err e) ->
+      ( { model | error = Just ("Failed to join room." ++ netErrToString e) }
+      , Cmd.none
+      )
+    Tick _ ->
+      if not
+        ( model.joinState == Playing
+        || model.joinState == WaitingOpponent
+        )
+      then
+        ( model, Cmd.none )
+      else if model.gameType /= Just Network then
+        ( model, Cmd.none )
+      else if model.failedNetReq >= 5 then
+        ( model, Cmd.none )
+      else
+        case model.roomCode of
+          Just rm ->
+            let url = "/rooms/" ++ rm ++ ".json" in
+            ( model
+            , Http.get
+                { url = url
+                , expect = Http.expectJson UpdateGameState decodeStateJson
+                }
+            )
+          Nothing ->
+            ( model, Cmd.none ) -- IMPOSSIBLE
+    UpdateGameState (Ok {players, currentTurn, boardStringy}) ->
+      let newJoinState =
+            if List.member "" players then
+              model.joinState
+            else
+              Playing
+      in
+      ( { model
+            | failedNetReq = 0
+            , joinState = newJoinState
+            , players = players
+            , currentTurn = currentTurn
+            , board = List.map pieceFromString boardStringy
+        }, Cmd.none )
+    UpdateGameState (Err e) ->
+      if model.failedNetReq <= 5 then
+        ( { model | failedNetReq = model.failedNetReq + 1 }, Cmd.none )
+      else
+        ( { model | error = Just ("Network failure." ++ netErrToString e) }
+        , Cmd.none )
+    SelectPiece pce ->
       ( { model | selected = Just pce }, Cmd.none )
-    Deselect ->
+    DeselectPiece ->
       ( { model | selected = Nothing }, Cmd.none )
-    Move (Piece _ _ f r as pce_) ->
+    MovePiece (Piece _ _ f r as pce_) ->
       case selected of
         Just pce ->
           -- TODO insert back into dropped spot?
           -- mildly annoying redraw bug with dom moving around
-          let newBoard = List.filter (\(Piece _ _ f_ r_) -> not (f == f_ && r == r_)) board in
-          let newBoard_ = List.filter (\p -> p /= pce) newBoard ++ [pce_] in
-          let rBoard = case model.player of
-                1 -> newBoard_
-                _ -> rotateBoard newBoard_
+          let newBoard = List.filter
+                (\(Piece _ _ f_ r_) -> not (f == f_ && r == r_)) board
           in
-          case model.roomCode of
-            Just rm ->
-              let url = "/rooms/" ++ rm ++ ".json" in
-              ( { model | board = newBoard_, selected = Nothing }, Http.post { url = url, body = Http.stringBody "application/json" (encodeBoard rBoard), expect = Http.expectWhatever PostSent } )
-            Nothing ->
-              ( { model | board = newBoard, selected = Nothing }, Cmd.none ) -- IMPOSSIBLE STATE
+          let newBoard_ = List.filter (\p -> p /= pce) newBoard ++ [pce_] in
+          let nextTurn = case model.currentTurn of
+                1 -> 2
+                _ -> 1
+          in
+          let newModel =
+                { model
+                    | board = newBoard_
+                    , selected = Nothing
+                    , currentTurn = nextTurn
+                }
+          in
+          case model.gameType of
+            Just Network ->
+              case model.roomCode of
+                Just rm ->
+                  let url = "/rooms/" ++ rm ++ ".json" in
+                  ( newModel, Http.post
+                      { url = url
+                      , body = Http.jsonBody (encodeStateJson newModel)
+                      , expect = Http.expectWhatever GameStateSent
+                      }
+                  )
+                      
+                Nothing ->
+                  ( model, Cmd.none) --> IMPOSSIBLE
+            _ ->
+              ( newModel, Cmd.none )
         Nothing ->
-          ( model , Cmd.none ) -- IMPOSSIBLE STATE
-    CreateRoom ->
-      ( { model | showLobby = False, player = 1 }, Random.generate NewRoom uuidStringGenerator )
-    JoinRoom newRoom ->
-      ( { model | board = rotateBoard board, input = "", roomCode = Just newRoom, showLobby = False, player = 2 }, Nav.replaceUrl key ("#" ++ newRoom) )
-    NewRoom newRoom ->
-      ( { model | roomCode = Just newRoom }, Nav.replaceUrl key ("#" ++ newRoom) )
-    Input npt ->
-      ( { model | input = npt }, Cmd.none)
-    Tick _ ->
-      case model.roomCode of
-        Just rm ->
-          let url = "/rooms/" ++ rm ++ ".json" in
-          ( model, Http.get { url = url, expect = Http.expectJson UpdateBoard decodeBoardJson } )
-        Nothing ->
-          ( model, Cmd.none ) -- waiting for room creation/join
-    UpdateBoard (Ok brd) ->
-      let newBoard = List.map decodePiece brd in
-      let rBoard = case model.player of
-            1 -> newBoard
-            _ -> rotateBoard newBoard
-      in
-      ( { model | board = rBoard }, Cmd.none )
-    UpdateBoard (Err httpError) -> -- TODO should do something
-      ( model, Cmd.none )
-    PostSent _ ->
-      ( model, Cmd.none )
+          ( model , Cmd.none ) -- IMPOSSIBLE
+    GameStateSent (Ok _) ->
+      ( model, Cmd.none ) -- Successful noop
+    GameStateSent (Err e) ->
+      ( { model | error = Just ("""
+            Move failed due to network error. Please reload page and try again.
+            Error was""" ++ (netErrToString e))
+        }, Cmd.none )
 
-encodeBoard : List Piece -> String
-encodeBoard board =
-  E.encode 0 (E.list E.string (List.map encodePiece board))
-
-encodePiece : Piece -> String
-encodePiece (Piece color pceType file rank) =
-  let color_ = case color of
-        Black -> "Black"
-        Red -> "Red"
-  in
-  color_ ++ ":" ++ encodePieceType pceType ++ ":" ++ String.fromChar file ++ ":" ++ String.fromInt rank
-
-decodePiece : String -> Piece
-decodePiece pce =
-  let segs = String.split ":" pce in
-  case segs of
-    clr :: pceType :: file :: rank :: [] ->
-      let clr_ = case clr of
-            "Black" -> Black
-            "Red" -> Red
-            _ -> Red -- IMPOSSIBLE STATE
-      in
-      let file_ = case String.uncons file of
-            Just (f, _) -> f
-            Nothing -> 'a'
-      in
-      let rank_ = case String.toInt rank of
-            Just r -> r
-            Nothing -> 1
-      in
-      Piece clr_ (decodePieceType pceType) file_ rank_
+netErrToString : Http.Error -> String
+netErrToString err =
+  case err of
+    Http.Timeout ->
+      " Network timeout"
+    Http.NetworkError ->
+      " Network error"
+    Http.BadStatus status ->
+      " Status code: " ++ String.fromInt status
     _ ->
-      Piece Red Soldier 'a' 1 -- IMPOSSIBLE STATE
+      " Unknown error"
 
-encodePieceType : PieceType -> String
-encodePieceType pceType =
-  case pceType of
-    Advisor -> "Advisor"
-    Cannon -> "Cannon"
-    Chariot -> "Chariot"
-    Elephant -> "Elephant"
-    General -> "General"
-    Horse -> "Horse"
-    Soldier -> "Soldier"
+decodeStateJson : D.Decoder (GameState)
+decodeStateJson =
+  D.map3 GameState
+    (D.field "players" (D.list D.string))
+    (D.field "currentTurn" D.int)
+    (D.field "gameState" (D.list D.string))
 
-decodePieceType : String -> PieceType
-decodePieceType pceType =
-  case pceType of
-    "Advisor" -> Advisor
-    "Cannon" -> Cannon
-    "Chariot" -> Chariot
-    "Elephant" -> Elephant
-    "General" -> General
-    "Horse" -> Horse
-    "Soldier" -> Soldier
-    _ -> Soldier -- IMPOSSIBLE STATE
+encodeStateJson : Model -> E.Value
+encodeStateJson {players, currentTurn, board} =
+  E.object
+    [ ( "players", E.list E.string players )
+    , ( "currentTurn", E.int currentTurn )
+    , ( "gameState", E.list E.string (List.map pieceToString board))
+    ]
 
-decodeBoardJson : D.Decoder (List String)
-decodeBoardJson =
-  D.list D.string
-
-subscriptions : model -> Sub Msg
-subscriptions model =
-  Time.every 1000 Tick
-
-onUrlRequest : UrlRequest -> Msg
-onUrlRequest _ =
-  NoOp
-
-onUrlChange : Url -> Msg
-onUrlChange _ =
-  NoOp
+-- XXX
+rotateBoard : List Piece -> List Piece
+rotateBoard board =
+  List.map (\(Piece c p f r) -> Piece c p (fromInt (8 - toInt f)) (11 - r)) board
 
 stopPropOnClick : msg -> Attribute msg
 stopPropOnClick msg =
@@ -278,84 +508,190 @@ view model =
         , style "width" "300px"
         , style "padding" "10px"
         ]
-        [ p [] [ text "Known bugs: Generals shouldn't be able to face each other" ]
-        , p [] [ text "Known bugs: No detection of game end states (including check)" ]
-        , p [] [ text "Known bugs: Refreshing the page breaks things (turns you into black player)" ]
-        , p [] [ text "Known bugs: There is no turn alteration code" ]
-        , p [] [ text "Known bugs: Moving a piece rapidly can duplicate it" ]
-        , p [] [ text "Known bugs: Pieces flicker, and can sometimes appear to move back after performing a move" ]
+        [ p [] [ text "Welcome to Chinese Chess" ]
+        , turnInfo model
+        , text "Piece info:"
+        , br [] []
         , case model.selected of
             Just pce -> pieceInfo pce
             Nothing -> text "*No piece selected*"
         ]
-    , if model.showLobby then
-        div
-          [ style "position" "absolute"
-          , style "top" "0"
-          , style "right" "0"
-          , style "bottom" "0"
-          , style "left" "0"
-          , style "background-color" "rgba(0, 0, 0, 0.4)"
-          ]
-          [ div
-              [ style "position" "absolute"
-              , style "top" "50%"
-              , style "left" "50%"
-              , style "transform" "translate(-50%, -50%)"
-              , style "background-color" "white"
-              , style "padding" "16px"
-              ]
-              [ p [] [ button [ onClick CreateRoom ] [ text "Create a new room" ] ]
-              , p [] [ text "..OR.." ]
-              , p []
-                  [ input [ onInput Input ] []
-                  , button [ onClick (JoinRoom model.input) ] [ text "Join Room" ]
-                  ]
-              ]
-          ]
-      else
-        div [] []
     ]
+    ++
+    case model.error of
+      Just err -> [ viewError err ]
+      Nothing ->
+        case model.joinState of
+          GameTypeSelection -> [ gameSelection model ]
+          Lobby -> [ lobby model ]
+          WaitingOpponent -> [ waitingOpponent model ]
+          Playing -> []
   }
+
+turnInfo : Model -> Html Msg
+turnInfo model =
+  let color = case model.turnOrder of
+        1 -> "Red"
+        _ -> "Black"
+  in
+  case model.joinState of
+    Playing ->
+      case model.gameType of
+        Just Network ->
+          if model.currentTurn == model.turnOrder then
+            p [] [ text ("You are " ++ color ++ ". It is your turn") ]
+          else
+            p [] [ text ("You are " ++ color ++ ". Waiting for opponent") ]
+        Just Local ->
+          case model.currentTurn of
+            1 -> p [] [ text "Red players turn" ]
+            _ -> p [] [ text "Black players turn" ]
+        Just AI ->
+          p [] [ text "Not yet implemented" ]
+        Nothing ->
+          p [] [ text "IMPOSSIBLE STATE REACHED" ]
+    _ ->
+      p [] [ text "Game not in progress" ]
+
+viewError : String -> Html Msg
+viewError err =
+  modal
+    [ p [] [ text "ERROR:" ]
+    , p [] [ text err ]
+    , button [ onClick ReloadPage ] [ text "Reload page" ]
+    ]
+
+gameSelection : Model -> Html Msg
+gameSelection model =
+  modal
+    [ p [] [ text "Please select a game type:" ]
+    , button [ onClick (SelectGame Network) ] [ text "1v1 Network" ]
+    , button [ onClick (SelectGame Local) ] [ text "1v1 Local" ]
+    , button [ onClick (SelectGame AI) ] [ text "1vAI" ]
+    ]
+
+lobby : Model -> Html Msg
+lobby model =
+  modal
+    [ p [] [ text "Join or create a room:" ]
+    , p [] [ button [ onClick CreateRoom ] [ text "Create a new room" ] ]
+    , p []
+        [ input [ placeholder "Enter room id...", onInput Input ] []
+        , button [ onClick (JoinRoom model.input) ] [ text "Join room" ]
+        ]
+    ]
+
+waitingOpponent : Model -> Html Msg
+waitingOpponent model =
+  let roomCode = case model.roomCode of
+        Just rmCd -> rmCd
+        Nothing -> ""
+  in
+  modal
+    [ p [] [ text "Waiting for opponent to join" ]
+    , p [] [ text "Copy the url or room code to send them" ]
+    , p [] [ text ("Room code: " ++ roomCode) ]
+    ]
+
+modal : List (Html Msg) -> Html Msg
+modal children =
+  div
+    [ style "position" "absolute"
+    , style "top" "0"
+    , style "right" "0"
+    , style "bottom" "0"
+    , style "left" "0"
+    , style "background-color" "rgba(0, 0, 0, 0.4)"
+    ]
+    [ div
+        [ style "position" "absolute"
+        , style "top" "50%"
+        , style "left" "50%"
+        , style "transform" "translate(-50%, -50%)"
+        , style "background-color" "white"
+        , style "padding" "16px"
+        ]
+        children
+    ]
 
 pieceInfo : Piece -> Html Msg
 pieceInfo (Piece _ pceType _ _) =
   case pceType of
     Advisor ->
-      text "Advisor (仕/士): Moves and captures one point diagonally. May not leave the palace"
+      text """
+        Advisor (仕/士): Moves and captures one point diagonally.
+        May not leave the palace
+        """
     Cannon ->
-      text "Cannon (炮/砲): Moves any number orthogonally. Captures by 'firing' over an intervening piece of own or enemy colour"
+      text """
+        Cannon (炮/砲): Moves any number orthogonally. Captures by 'firing'
+        over an intervening piece of own or enemy colour
+        """
     Chariot ->
-      text "Chariot (俥/車): Moves and captures any number orthogonally"
+      text """
+        Chariot (俥/車): Moves and captures any number orthogonally
+        """
     Elephant ->
-      text "Elephant (相/象): Moves and captures two points diagonally. The Elephant does not jump. The Elephant cannot cross the river thus it serves mainly as a defensive piece"
+      text """
+        Elephant (相/象): Moves and captures two points diagonally.
+        The Elephant does not jump. The Elephant cannot cross the river
+        thus it serves mainly as a defensive piece
+        """
     General ->
-      text "General (帥/將): Moves and captures one point orthogonally. May not leave the palace. And may not face the opposing general otherwise they will perform the 'flying general' (飛將) move and cross the entire board to capture the enemy general"
+      text """
+        General (帥/將): Moves and captures one point orthogonally.
+        May not leave the palace. And may not face the opposing general
+        otherwise they will perform the 'flying general' (飛將) move and
+        cross the entire board to capture the enemy general
+        """
     Horse ->
-      text "Horse (傌/馬): Moves and captures in a two step move with one point moved orthogonally and then one point diagonally. The horse does not jump. Blocking a horse is known as 'Hobbling the horse's leg' (蹩馬腿)"
+      text """
+        Horse (傌/馬): Moves and captures in a two step move with one point
+        moved orthogonally and then one point diagonally. The horse does not
+        jump. Blocking a horse is known as 'Hobbling the horse's leg' (蹩馬腿)
+        """
     Soldier ->
-      text "Soldier (兵/卒): Moves and captures by advancing one point. Upon crossing the river can move and capture horizontally one point"
+      text """
+        Soldier (兵/卒): Moves and captures by advancing one point. Upon
+        crossing the river can move and capture horizontally one point
+        """
 
 viewBoard : Model -> Html Msg
-viewBoard {player, board, selected} =
+viewBoard model =
   div
     [ style "position" "absolute"
     , style "background-image" (imgUrl "board.jpg")
     , style "width" "521px"
     , style "height" "577px"
-    , onClick Deselect
+    , onClick DeselectPiece
     ]
-    ((List.map (viewPiece player selected) board)
-    ++ viewMoves board selected
+    ((List.map (viewPiece model) model.board)
+    ++ viewMoves model.board model.selected
     )
 
-viewPiece : Int -> Maybe Piece -> Piece -> Html Msg
-viewPiece player selected (Piece color pceType file rank as pce) =
-  let playerColor = case player of
-        1 -> Red
-        _ -> Black
+viewPiece : Model -> Piece -> Html Msg
+viewPiece model (Piece color pceType file rank as pce) =
+  let allowedSelection =
+        case model.gameType of
+          Just Network ->
+            if model.currentTurn == model.turnOrder then
+              case model.turnOrder of
+                1 -> Just Red
+                2 -> Just Black
+                _ -> Nothing
+            else
+              Nothing
+          Just Local ->
+            case model.currentTurn of
+              1 -> Just Red
+              2 -> Just Black
+              _ -> Nothing
+          Just AI ->
+            Nothing
+          Nothing ->
+            Nothing
   in
-  let isSelected = selected == Just pce in
+  let isSelected = model.selected == Just pce in
   div
     (pos 57 file rank
     ++
@@ -367,8 +703,8 @@ viewPiece player selected (Piece color pceType file rank as pce) =
     , style "border-radius" "100%" -- stops cursor looking wrong when off piece
     ]
     ++
-    if playerColor == color then
-      [ stopPropOnClick (Select pce) ]
+    if Just color == allowedSelection then
+      [ stopPropOnClick (SelectPiece pce) ]
     else
       []
     ++
@@ -395,8 +731,8 @@ viewMove (Piece color pceType file rank as pce) =
     , style "height" "25px"
     , style "background-color" "green"
     , style "cursor" "pointer"
-    , style "border-radius" "100%" -- stops cursor looking wrong when off piece
-    , stopPropOnClick (Move pce)
+    , style "border-radius" "100%" -- fix cursor collision on corner
+    , stopPropOnClick (MovePiece pce)
     ]
     )
     []
@@ -412,11 +748,15 @@ moves board (Piece color pceType file rank as pce) =
       , Piece color pceType (subFile file 1) (rank - 1)
       ]
     Cannon ->
-      List.map (\file_ -> Piece color pceType (addFile 'a' file_) rank) (List.range 0 8)
+      List.map
+        (\file_ -> Piece color pceType (addFile 'a' file_) rank)
+        (List.range 0 8)
       ++
       List.map (\rank_ -> Piece color pceType file rank_) (List.range 1 10)
     Chariot ->
-      List.map (\file_ -> Piece color pceType (addFile 'a' file_) rank) (List.range 0 8)
+      List.map
+        (\file_ -> Piece color pceType (addFile 'a' file_) rank)
+        (List.range 0 8)
       ++
       List.map (\rank_ -> Piece color pceType file rank_) (List.range 1 10)
     Elephant ->
@@ -446,243 +786,142 @@ moves board (Piece color pceType file rank as pce) =
       , Piece color pceType (subFile file 2) (rank - 1)
       ]
     Soldier ->
-      [ Piece color pceType file (rank + 1)
+      [ case color of
+          Red -> Piece color pceType file (rank + 1)
+          Black -> Piece color pceType file (rank - 1)
       , Piece color pceType (addFile file 1) rank
       , Piece color pceType (subFile file 1) rank
       ]
     )
     |> List.filterMap pruneOffBoard
-    |> List.filterMap pruneOutOfZone
-    |> List.filterMap (pruneNotAcrossRiver pce)
+    |> List.filterMap prunePalace
+    |> List.filterMap (pruneRiver pce)
     |> List.filterMap (pruneLandOnTeam board)
     |> List.filterMap (pruneBlocked board pce)
 
--- Why did I mix 0 addressing and 1 addressing?
+-- possibleMove
 pruneOffBoard : Piece -> Maybe Piece
-pruneOffBoard (Piece color pceType file rank as pce) =
-  if not (0 <= toInt file && toInt file <= 8) then
-    Nothing
-  else if not (1 <= rank && rank <= 10) then
-    Nothing
+pruneOffBoard (Piece _ _ f_ r_ as p_) =
+  if 0 <= toInt f_ && toInt f_ <= 8 && 1 <= r_ && r_ <= 10 then
+    Just p_
   else
-    Just pce
+    Nothing
 
-pruneOutOfZone : Piece -> Maybe Piece
-pruneOutOfZone (Piece color pceType file rank as pce) =
-  if pceType == Advisor || pceType == General then
-    if not (3 <= toInt file && toInt file <= 5) then
-      Nothing
-    else if not (1 <= rank && rank <= 3) then
-      Nothing
+-- possibleMove
+prunePalace : Piece -> Maybe Piece
+prunePalace (Piece c_ pt_ f_ r_ as p_) =
+  if c_ == Red && (pt_ == Advisor || pt_ == General) then
+    if 3 <= toInt f_ && toInt f_ <= 5 && 1 <= r_ && r_ <= 3 then
+      Just p_
     else
-      Just pce
-  else if pceType == Elephant then
-    if rank > 5 then -- across the river
       Nothing
+  else if c_ == Black && (pt_ == Advisor || pt_ == General) then
+    if 3 <= toInt f_ && toInt f_ <= 5 && 8 <= r_ && r_ <= 10 then
+      Just p_
     else
-      Just pce
+      Nothing
   else
-    Just pce
+    Just p_
 
 -- originalPiece possibleMove
-pruneNotAcrossRiver : Piece -> Piece -> Maybe Piece
-pruneNotAcrossRiver (Piece _ _ f r) (Piece color pceType file rank as pce) =
-  case pceType of
-    Soldier ->
-      if f /= file && not (5 < rank) then
-        Nothing
+pruneRiver : Piece -> Piece -> Maybe Piece
+pruneRiver (Piece c pt f r) (Piece _ _ f_ r_ as p_) =
+  case (c, pt) of
+    (Red, Soldier) ->
+      if f == f_ || r > 5 then
+        Just p_
       else
-        Just pce
+        Nothing
+    (Black, Soldier) ->
+      if f == f_ || r < 6 then
+        Just p_
+      else
+        Nothing
+    (Red, Elephant) ->
+      if r_ <= 5 then
+        Just p_
+      else
+        Nothing
+    (Black, Elephant) ->
+      if r_ >= 6 then
+        Just p_
+      else
+        Nothing
     _ ->
-      Just pce
+      Just p_
 
--- removes if would land on team or self
+-- board possibleMove
 pruneLandOnTeam : List Piece -> Piece -> Maybe Piece
-pruneLandOnTeam board (Piece color pceType file rank as pce) =
-  if List.isEmpty (List.filter
-      (\(Piece c _ f r) -> c == color && f == file && r == rank)
-      board
-    )
-  then
-    Just pce
-  else
+pruneLandOnTeam board (Piece c_ _ f_ r_ as p_) =
+  if List.any (\(Piece c _ f r) -> c == c_ && f == f_ && r == r_) board then
     Nothing
+  else
+    Just p_
 
 -- board originalPiece possibleMove
 pruneBlocked : List Piece -> Piece -> Piece -> Maybe Piece
-pruneBlocked board (Piece _ pceType file rank as pce) (Piece _ _ file_ rank_ as pce_) =
-  case pceType of
-    Cannon ->
-      if file == file_ && rank_ > rank then
-        let sameFile = List.filter
-              (\(Piece _ _ f r as p) -> p /= pce && f == file && r > rank) board
-              |> sortByRank
-        in
-        case sameFile of
-          (Piece _ _ _ r) :: (Piece _ _ _ r_) :: xss ->
-            if r_ == rank_ then
-              Just pce_
-            else if r > rank_ then
-              Just pce_
-            else
-              Nothing
-          (Piece _ _ _ r) :: xs ->
-            if r > rank_ then
-              Just pce_
-            else
-              Nothing
-          [] ->
-            Just pce_
-      else if file == file_ && rank_ < rank then
-        let sameFile = List.filter
-              (\(Piece _ _ f r as p) -> p /= pce && f == file && r < rank) board
-              |> sortByRank
-              |> List.reverse
-        in
-        case sameFile of
-          (Piece _ _ _ r) :: (Piece _ _ _ r_) :: xss ->
-            if r_ == rank_ then
-              Just pce_
-            else if r < rank_ then
-              Just pce_
-            else
-              Nothing
-          (Piece _ _ _ r) :: xs ->
-            if r < rank_ then
-              Just pce_
-            else
-              Nothing
-          [] ->
-            Just pce_
-      else if rank == rank_ && toInt file_ > toInt file then
-        let sameRank = List.filter
-              (\(Piece _ _ f r as p) -> p /= pce && r == rank && toInt f > toInt file) board
-              |> sortByFile
-        in
-        case sameRank of
-          (Piece _ _ f _) :: (Piece _ _ f_ _) :: xss ->
-            if f_ == file_ then
-              Just pce_
-            else if f > file_ then
-              Just pce_
-            else
-              Nothing
-          (Piece _ _ f _) :: xs ->
-            if f > file_ then
-              Just pce_
-            else
-              Nothing
-          [] ->
-            Just pce_
-      else if rank == rank_ && toInt file_ < toInt file then
-        let sameRank = List.filter
-              (\(Piece _ _ f r as p) -> p /= pce && r == rank && toInt f < toInt file) board
-              |> sortByFile
-              |> List.reverse
-        in
-        case sameRank of
-          (Piece _ _ f _) :: (Piece _ _ f_ _) :: xss ->
-            if f_ == file_ then
-              Just pce_
-            else if f < file_ then
-              Just pce_
-            else
-              Nothing
-          (Piece _ _ f _) :: xs ->
-            if f < file_ then
-              Just pce_
-            else
-              Nothing
-          [] ->
-            Just pce_
-      else
-        Just pce_ -- IMPOSSIBLE STATE
-    Chariot ->
-      if file == file_ && rank_ > rank then
-        if List.isEmpty (List.filter
-          (\(Piece _ _ f r as p) -> p /= pce && f == file && r - rank > 0 && r - rank < rank_ - rank)
-          board
-          )
-        then
-          Just pce_
+pruneBlocked board (Piece _ pt f r as p) (Piece _ _ f_ r_ as p_) =
+  let (nf_, nr_) = (subFiles f f_, r - r_) in
+  let normalBoard = List.map (\(Piece c__ pt__ f__ r__) ->
+          Piece c__ pt__ (subFiles f f__) (r - r__)
+        ) board
+  in
+  let sameDirection =
+        normalBoard
+          -- same file or rank as possibleMove
+          |> List.filter (\(Piece _ _ nf nr) ->
+                sameSign (toInt nf) (toInt nf_) && sameSign nr nr_
+              )
+          |> sortNearest
+  in
+  if pt == Cannon then
+    case sameDirection of
+      Piece _ _ nf nr :: Piece _ _ nf__ nr__ ::  _ ->
+        if nf__ == nf_ && nr__ == nr_ then
+          Just p_
+        else if (abs (toInt nf_) < abs (toInt nf)) || abs nr_ < abs nr then
+          Just p_
         else
           Nothing
-      else if file == file_ && rank_ < rank then
-        if List.isEmpty (List.filter
-          (\(Piece _ _ f r as p) -> p /= pce && f == file && r - rank < 0 && r - rank > rank_ - rank)
-          board
-          )
-        then
-          Just pce_
+      Piece _ _ nf nr :: _ ->
+        if (abs (toInt nf_) < abs (toInt nf)) || abs nr_ < abs nr then
+          Just p_
         else
           Nothing
-      else if rank == rank_ && toInt file_ > toInt file then
-        if List.isEmpty (List.filter
-          (\(Piece _ _ f r as p) -> p /= pce && r == rank && toInt f - toInt file > 0 && toInt f - toInt file < toInt file_ - toInt file)
-          board
-          )
-        then
-          Just pce_
+      [] ->
+        Just p_
+  else if pt == Chariot then
+    case sameDirection of
+      Piece _ _ nf nr :: _ ->
+        if (abs (toInt nf_) <= abs (toInt nf)) && abs nr_ <= abs nr then
+          Just p_
         else
           Nothing
-      else if rank == rank_ && toInt file_ < toInt file then
-        let fdiff = abs (toInt file_ - toInt file) in
-        if List.isEmpty (List.filter
-          (\(Piece _ _ f r as p) -> p /= pce && r == rank && toInt f - toInt file < 0 && toInt f - toInt file > toInt file_ - toInt file)
-          board
-          )
-        then
-          Just pce_
-        else
-          Nothing
-      else
-        Just pce_ -- IMPOSSIBLE STATE
-    Elephant ->
-      -- two step blocked by first step
-      let (Piece _ _ f r) = interpolateMove pce pce_ in
-      if List.isEmpty (List.filter (\(Piece _ _ f_ r_) -> f_ == f && r_ == r) board) then
-        Just pce_
-      else
+      [] ->
+        Just p_
+  else if pt == Elephant || pt == Horse then
+      if List.any (\(Piece _ _ nf nr) ->
+              nf == fromInt (toInt nf_ // 2) && nr == nr_ // 2
+            )
+            normalBoard
+      then
         Nothing
-    Horse ->
-      -- two step blocked by first step
-      let (Piece _ _ f r) = interpolateMove pce pce_ in
-      if List.isEmpty (List.filter (\(Piece _ _ f_ r_) -> f_ == f && r_ == r) board) then
-        Just pce_
       else
-        Nothing
-    -- Single step pieces: Advisor, General, Soldier accounted for by pruneLandOnTeam
-    _ ->
-      Just pce_
+        Just p_
+  else
+    Just p_
 
--- originalPiece possibleMove -> inBetweenMove
--- Works for two step pieces only (Horse and Elephant)
-interpolateMove : Piece -> Piece -> Piece
-interpolateMove (Piece color pceType f r) (Piece _ _ f_ r_) =
-  case pceType of
-    Elephant ->
-      let f__ = fromInt (toInt f + (toInt f_ - toInt f) // 2) in
-      let r__ = r + (r_ - r) // 2 in
-      Piece color pceType f__ r__
-    Horse ->
-      let fdiff = toInt f_ - toInt f in
-      let rdiff = r_ - r in
-      if fdiff == 2 || fdiff == -2 then
-        Piece color pceType (fromInt (toInt f + fdiff // 2)) r
-      else if rdiff == 2 || rdiff == -2 then
-        Piece color pceType f (r + rdiff // 2)
-      else
-        Piece color pceType f r -- IMPOSSIBLE STATE
-    _ ->
-      Piece color pceType f r -- IMPOSSIBLE STATE
+sameSign : Int -> Int -> Bool
+sameSign a b =
+  ((a == 0) == (b == 0))
+  && (a < 0) == (b < 0)
 
-sortByFile : List Piece -> List Piece
-sortByFile pces =
-  List.sortWith (\(Piece _ _ f1 _) (Piece _ _ f2 _) -> compare f1 f2) pces
-
-sortByRank : List Piece -> List Piece
-sortByRank pces =
-  List.sortWith (\(Piece _ _ _ r1) (Piece _ _ _ r2) -> compare r1 r2) pces
+sortNearest : List Piece -> List Piece
+sortNearest pces =
+  List.sortWith (\(Piece _ _ f1 r1) (Piece _ _ f2 r2) ->
+      compare (abs (toInt f1), (abs r1)) (abs (toInt f2), (abs r2))
+    )
+    pces
 
 icon : Color -> PieceType -> String
 icon color pce =
@@ -715,6 +954,14 @@ pos width file rank =
 addFile : Char -> Int -> Char
 addFile c i =
   fromInt ((toInt c) + i)
+
+addFiles : Char -> Char -> Char
+addFiles a b =
+  fromInt ((toInt a) + (toInt b))
+
+subFiles : Char -> Char -> Char
+subFiles a b =
+  fromInt ((toInt a) - (toInt b))
 
 subFile : Char -> Int -> Char
 subFile c i =
