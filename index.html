@@ -1,0 +1,31 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Chinese Chess - Vaughan.kitchen</title>
+  <style>body { padding: 0; margin: 0; }</style>
+  <script src="main.js"></script>
+</head>
+<body>
+  <pre id="elm"></pre>
+  <script>
+  function uuid(a,b){for(b=a='';a++<36;b+=a*51&52?(a^15?8^Math.random()*(a^20?16:4):4).toString(16):'-');return b}
+  var uid = '';
+  if (document.cookie) {
+    var cookies = document.cookie;
+    var start = cookies.indexOf('uid=')
+    if (start != -1) {
+      uid = cookies.slice(start + 4, start + 40);
+    }
+  }
+  if (!uid) {
+    uid = uuid();
+    document.cookie = 'uid=' + uid;
+  }
+  var app = Elm.Main.init({
+    node: document.getElementById('elm'),
+    flags: uid
+  });
+  </script>
+</body>
+</html>
