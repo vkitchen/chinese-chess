@@ -693,7 +693,7 @@ viewPiece model (Piece color pceType file rank as pce) =
   in
   let isSelected = model.selected == Just pce in
   div
-    (pos 57 file rank
+    (((pos 57 file rank
     ++
     [ style "position" "absolute"
     , style "width" "57px"
@@ -703,14 +703,22 @@ viewPiece model (Piece color pceType file rank as pce) =
     , style "border-radius" "100%" -- stops cursor looking wrong when off piece
     ]
     ++
+    if pceType == General && isInCheck color model.board then
+      [ style "border" "2px solid red" ]
+    else
+      []
+    )
+    ++
+    if isSelected then
+      [ style "border" "2px solid green" ]
+    else
+      []
+    ) -- XXX extra parenthesis due to apparent bug in compiler argument order?
+    ++
     if Just color == allowedSelection then
       [ stopPropOnClick (SelectPiece pce) ]
     else
       []
-    ++
-    if isSelected then
-      [ style "border" "2px solid green" ]
-    else []
     )
     []
 
@@ -910,6 +918,23 @@ pruneBlocked board (Piece _ pt f r as p) (Piece _ _ f_ r_ as p_) =
         Just p_
   else
     Just p_
+
+isInCheck : Color -> List Piece -> Bool
+isInCheck clr board =
+  let opposition = List.filter (\(Piece c _ _ _ as p) -> c /= clr) board in
+  let generalList = List.filter
+        (\(Piece c pt _ _ as p) -> c == clr && pt == General) board
+  in
+  case generalList of
+    Piece c pt f r :: [] ->
+      List.any
+        (\p_ ->
+            List.any
+              (\(Piece _ _ f_ r_) -> f_ == f && r == r_)
+              (moves board p_)
+        )
+        opposition
+    _ -> False -- How did the general die?
 
 sameSign : Int -> Int -> Bool
 sameSign a b =
