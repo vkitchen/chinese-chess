@@ -17,7 +17,8 @@ import Json.Decode as D
 import Json.Encode as E
 
 type Color = Red | Black
-type PieceType = Advisor | Cannon | Chariot | Elephant | General | Horse | Soldier
+type PieceType =
+  Advisor | Cannon | Chariot | Elephant | General | Horse | Soldier
 -- color piece file rank
 type Piece = Piece Color PieceType Char Int
 
@@ -509,6 +510,7 @@ view model =
         , style "padding" "10px"
         ]
         [ p [] [ text "Welcome to Chinese Chess" ]
+        , p [] [ text "Known bugs: You can currently move into check" ]
         , turnInfo model
         , text "Piece info:"
         , br [] []
@@ -806,6 +808,7 @@ moves board (Piece color pceType file rank as pce) =
     |> List.filterMap (pruneRiver pce)
     |> List.filterMap (pruneLandOnTeam board)
     |> List.filterMap (pruneBlocked board pce)
+    |> addFlyingGeneral board pce
 
 -- possibleMove
 pruneOffBoard : Piece -> Maybe Piece
@@ -918,6 +921,29 @@ pruneBlocked board (Piece _ pt f r as p) (Piece _ _ f_ r_ as p_) =
         Just p_
   else
     Just p_
+
+-- XXX quick hack until proper check/checkmate code is in place
+-- board originalPiece moves
+addFlyingGeneral : List Piece -> Piece -> List Piece -> List Piece
+addFlyingGeneral board (Piece c pt f r as p) mvs =
+  let normalizedSameFile = board
+        |> List.filter (\(Piece _ pt_ f_ _) -> pt_ /= General && f_ == f)
+        |> List.map (\(Piece c_ pt_ f_ r_) -> Piece c_ pt_ f_ (r_ - r))
+  in
+  let opposingGeneral = List.head (List.filter
+        (\(Piece c_ pt_ f_ _) -> c_ /= c && pt_ == General && f_ == f) board)
+  in
+  (case opposingGeneral of
+    Just (Piece _ _ f_ r_) ->
+      if not (List.any
+        (\(Piece _ _ _ nr) -> abs nr < abs (r_ - r)) normalizedSameFile)
+      then
+        Piece c pt f_ r_ :: mvs
+      else
+        mvs
+    _ ->
+      mvs
+  )
 
 isInCheck : Color -> List Piece -> Bool
 isInCheck clr board =
