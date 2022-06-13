@@ -80,7 +80,7 @@ type GameType = Network | Local | AI
 type JoinState = GameTypeSelection | Lobby | WaitingOpponent | Playing
 
 rootPath = "/games/chinese-chess/"
-imgPath = rootPath ++ "static/img/"
+imgPath = "static/img/"
 
 main =
   Browser.application
