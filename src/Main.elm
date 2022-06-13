@@ -55,6 +55,7 @@ type alias Model =
   , key : Nav.Key
   , userId : String
   , gameType : GameType
+  , gameState : Xiangqi.Model
   }
 
 type alias GameState =
@@ -66,12 +67,14 @@ type alias GameState =
 -- Uid is a flag from JS. It is a unique per-browser user code in a cookie
 init : String -> Url -> Nav.Key -> ( Model, Cmd Msg )
 init uid url key =
+  let (subModel, _) = Xiangqi.init uid url key in
   let defaultModel =
         { error = Nothing
         , failedNetReq = 0
         , key = key
         , userId = uid
         , gameType = NoGameType
+        , gameState = subModel
         }
   in
   -- Specialisation of JoinRoom update method
@@ -114,7 +117,7 @@ type Msg
   | RoomMsg RmMsg
 --  | UpdateGameState (Result Http.Error GameState)
 --  | GameStateSent (Result Http.Error ())
---  | GameMsg Xiangqi.Msg
+  | GameMsg Xiangqi.Msg
 
 type RmMsg
   = DetermineTurnOrder Int
@@ -194,6 +197,9 @@ update msg ({key} as model) =
             Ok updated_ -> ( { model | gameType = NetworkGame updated_ }, cmd )
             Err e -> ( { model | error = Just e }, cmd )
         _ -> ( model, Cmd.none )
+    GameMsg subMsg ->
+      let (model_, cmd) = Xiangqi.update subMsg model.gameState in
+      ( { model | gameState = model_ }, Cmd.none )
 
 updateRoom : RmMsg -> Model -> Room -> ( Result String Room, Cmd Msg )
 updateRoom msg model room =

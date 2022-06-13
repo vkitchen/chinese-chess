@@ -1,4 +1,4 @@
-module Xiangqi exposing (Msg, update, viewExample)
+module Xiangqi exposing (Model, Msg, init, update, viewExample)
 
 import Browser exposing (Document, UrlRequest)
 import Browser.Navigation as Nav
