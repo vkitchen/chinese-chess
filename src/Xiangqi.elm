@@ -1,4 +1,4 @@
-module Xiangqi exposing (Model, Msg, init, update, viewExample)
+module Xiangqi exposing (Model, Msg, init, update, view)
 
 import Browser exposing (Document, UrlRequest)
 import Browser.Navigation as Nav
@@ -110,12 +110,12 @@ init uid url key =
   , failedNetReq = 0
   , key = key
   , userId = uid
-  , gameType = Nothing
-  , joinState = GameTypeSelection
+  , gameType = Just Local
+  , joinState = Playing
   , roomCode = Nothing
   , board = initialBoard
   , players = []
-  , turnOrder = 0
+  , turnOrder = 1
   , currentTurn = 1
   , selected = Nothing
   , input = ""
@@ -241,60 +241,32 @@ stopPropOnClick : msg -> Attribute msg
 stopPropOnClick msg =
   stopPropagationOn "click" (Decode.succeed (msg, True))
 
-viewExample : Html msg
-viewExample =
-  div
-    [ style "position" "absolute"
-    , style "background-image" (imgUrl "board.jpg")
-    , style "width" "521px"
-    , style "height" "577px"
-    ]
-    ((List.map viewExamplePiece initialBoard)
-    )
-
-viewExamplePiece : Piece -> Html msg
-viewExamplePiece (Piece color pceType file rank as pce) =
-  div
-    (pos 57 file rank
-    ++
-    [ style "position" "absolute"
-    , style "width" "57px"
-    , style "height" "57px"
-    , style "background-image" (imgUrl (icon color pceType))
-    , style "cursor" "pointer"
-    , style "border-radius" "100%" -- stops cursor looking wrong when off piece
-    ]
-    )
-    []
-
-view : Model -> Document Msg
+view : Model -> Html Msg
 view model =
-  { title = "Chinese Chess - Vaughan.Kitchen"
-  , body =
-    [ div
-        [ style "position" "relative"
-        , style "width" "521px"
-        , style "height" "577px"
-        , style "display" "inline-block"
-        ]
-        [ viewBoard model ]
-    , div
-        [ style "display" "inline-block"
-        , style "vertical-align" "top"
-        , style "width" "300px"
-        , style "padding" "10px"
-        ]
-        [ p [] [ text "Welcome to Chinese Chess" ]
-        , p [] [ text "Known bugs: You can currently move into check" ]
-        , turnInfo model
-        , text "Piece info:"
-        , br [] []
-        , case model.selected of
-            Just pce -> pieceInfo pce
-            Nothing -> text "*No piece selected*"
-        ]
-    ]
-  }
+  div []
+  [ div
+      [ style "position" "relative"
+      , style "width" "521px"
+      , style "height" "577px"
+      , style "display" "inline-block"
+      ]
+      [ viewBoard model ]
+  , div
+      [ style "display" "inline-block"
+      , style "vertical-align" "top"
+      , style "width" "300px"
+      , style "padding" "10px"
+      ]
+      [ p [] [ text "Welcome to Chinese Chess" ]
+      , p [] [ text "Known bugs: You can currently move into check" ]
+      , turnInfo model
+      , text "Piece info:"
+      , br [] []
+      , case model.selected of
+          Just pce -> pieceInfo pce
+          Nothing -> text "*No piece selected*"
+      ]
+  ]
 
 turnInfo : Model -> Html Msg
 turnInfo model =

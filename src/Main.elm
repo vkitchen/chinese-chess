@@ -198,7 +198,7 @@ update msg ({key} as model) =
             Err e -> ( { model | error = Just e }, cmd )
         _ -> ( model, Cmd.none )
     GameMsg subMsg ->
-      let (model_, cmd) = Xiangqi.update subMsg model.gameState in
+      let (model_, cmd) = Xiangqi.update (Debug.log "msg" subMsg) model.gameState in
       ( { model | gameState = model_ }, Cmd.none )
 
 updateRoom : RmMsg -> Model -> Room -> ( Result String Room, Cmd Msg )
@@ -357,25 +357,7 @@ view : Model -> Document Msg
 view model =
   { title = pageTitle
   , body =
-    [ div
-        [ style "position" "relative"
-        , style "width" "521px"
-        , style "height" "577px"
-        , style "display" "inline-block"
-        ]
-        [ Xiangqi.viewExample ]
-    , div
-        [ style "display" "inline-block"
-        , style "vertical-align" "top"
-        , style "width" "300px"
-        , style "padding" "10px"
-        ]
-        [ p [] [ text "Welcome to Chinese Chess" ]
-        , p [] [ text "Known bugs: You can currently move into check" ]
-        , turnInfo model
-        , text "Piece info:"
-        ]
-    ]
+    [ Html.map GameMsg (Xiangqi.view model.gameState) ]
     ++
     case model.error of
       Just err -> [ viewError err ]
