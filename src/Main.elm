@@ -201,7 +201,7 @@ update msg ({key} as model) =
             Err e -> ( { model | error = Just e }, cmd )
         _ -> ( model, Cmd.none )
     GameMsg subMsg ->
-      let (model_, cmd) = Xiangqi.update (Debug.log "msg" subMsg) model.gameState in
+      let (model_, cmd) = Xiangqi.update subMsg model.gameState in
       ( { model | gameState = model_ }, Cmd.none )
 
 updateRoom : RmMsg -> Model -> Room -> ( Result String Room, Cmd Msg )
