@@ -82,16 +82,6 @@ type JoinState = GameTypeSelection | Lobby | WaitingOpponent | Playing
 rootPath = "/games/chinese-chess/"
 imgPath = "static/img/"
 
-main =
-  Browser.application
-    { init = init
-    , subscriptions = subscriptions
-    , update = update
-    , view = view
-    , onUrlRequest = (\_ -> NoOp)
-    , onUrlChange = (\_ -> NoOp)
-    }
-
 type alias Model =
   { error : Maybe String
   , failedNetReq : Int
@@ -116,43 +106,20 @@ type alias GameState =
 
 init : String -> Url -> Nav.Key -> ( Model, Cmd Msg )
 init uid url key =
-  let defaultModel =
-        { error = Nothing
-        , failedNetReq = 0
-        , key = key
-        , userId = uid
-        , gameType = Nothing
-        , joinState = GameTypeSelection
-        , roomCode = Nothing
-        , board = initialBoard
-        , players = []
-        , turnOrder = 0
-        , currentTurn = 1
-        , selected = Nothing
-        , input = ""
-        }
-  in
-  -- Specialisation of JoinRoom update method
-  case url.fragment of
-    Nothing ->
-      ( defaultModel, Cmd.none )
-    Just roomCode ->
-      if isValidUuid roomCode then
-        let url_ = "/rooms/" ++ roomCode ++ ".json" in
-        ( { defaultModel
-              | gameType = Just Network
-              , joinState = Lobby
-              , roomCode = Just roomCode
-          }
-        , Http.get
-            { url = url_
-            , expect = Http.expectJson RoomReceived decodeStateJson
-            }
-        )
-      else
-        ( { defaultModel | error = Just "Invalid room code" }
-        , Cmd.none
-        )
+  ( { error = Nothing
+  , failedNetReq = 0
+  , key = key
+  , userId = uid
+  , gameType = Nothing
+  , joinState = GameTypeSelection
+  , roomCode = Nothing
+  , board = initialBoard
+  , players = []
+  , turnOrder = 0
+  , currentTurn = 1
+  , selected = Nothing
+  , input = ""
+  }, Cmd.none )
 
 initialBoard : List Piece
 initialBoard =
@@ -199,213 +166,17 @@ initialBoard =
   , Piece Red Chariot 'i' 1
   ]
 
-subscriptions : model -> Sub Msg
-subscriptions model =
-  Time.every 1000 Tick
-
 type Msg
   = NoOp
-  | ReloadPage
-  | SelectGame GameType
-  | DetermineTurnOrder Int
-  | NewRoom String
-  | CreateRoom
-  | RoomCreated (Result Http.Error ())
-  | Input String
-  | JoinRoom String
-  | RoomReceived (Result Http.Error GameState)
-  | RoomJoined (Result Http.Error ())
-  | Tick Time.Posix
-  | UpdateGameState (Result Http.Error GameState)
   | SelectPiece Piece
   | DeselectPiece
   | MovePiece Piece
-  | GameStateSent (Result Http.Error ())
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg ({key, board, selected} as model) =
   case msg of
     NoOp ->
       ( model, Cmd.none )
-    ReloadPage ->
-      ( model, Nav.reload )
-    SelectGame gameType ->
-      case gameType of
-        Network ->
-          ( { model | gameType = Just Network, joinState = Lobby }
-          , Random.generate DetermineTurnOrder (Random.int 1 2)
-          )
-        Local ->
-          ( { model | gameType = Just Local, joinState = Playing }, Cmd.none )
-        AI ->
-          ( { model | error = Just "AI mode not yet implemented" }, Cmd.none )
-    -- For host only. Redetermines on connection
-    DetermineTurnOrder trnOrd ->
-      ( { model | turnOrder = trnOrd }, Cmd.none )
-    CreateRoom ->
-      case model.turnOrder of
-        1 -> 
-          ( { model | players = [ model.userId, "" ] }
-          , Random.generate NewRoom uuidStringGenerator
-          )
-        _ ->
-          ( { model | players = [ "", model.userId ] }
-          , Random.generate NewRoom uuidStringGenerator
-          )
-    NewRoom newRoom ->
-      let url = "/rooms/" ++ newRoom ++ ".json" in
-      ( { model | roomCode = Just newRoom }
-        , Http.post
-            { url = url
-            , body = Http.jsonBody (encodeStateJson model)
-            , expect = Http.expectWhatever RoomCreated
-            }
-      )
-    RoomCreated (Ok _) ->
-      case model.roomCode of
-        Just rm ->
-          ( { model | joinState = WaitingOpponent }
-          , Nav.replaceUrl key ("#" ++ rm)
-          )
-        _ ->
-          ( model, Cmd.none ) -- IMPOSSIBLE
-    RoomCreated (Err e) ->
-      ( { model | error = Just ("Failed to create room." ++ netErrToString e) }
-      , Cmd.none
-      )
-    Input npt ->
-      ( { model | input = npt }, Cmd.none)
-    JoinRoom newRoom ->
-      if isValidUuid newRoom then
-        let url = "/rooms/" ++ newRoom ++ ".json" in
-        ( { model | input = "", roomCode = Just newRoom }
-        , Http.get
-            { url = url
-            , expect = Http.expectJson RoomReceived decodeStateJson
-            }
-        )
-      else
-        ( { model | error = Just "Invalid room code" }
-        , Cmd.none
-        )
-    RoomReceived (Ok {players, currentTurn, boardStringy}) ->
-      let url = "/rooms/" ++ (case model.roomCode of
-              Just rm -> rm
-              Nothing -> "" -- IMPOSSIBLE
-            ) ++ ".json"
-      in
-      let (firstPlayer, secondPlayer) = case players of
-            fp :: sp :: _  -> (fp, sp)
-            _ -> ("nope", "nope") -- Will trigger a join error later
-      in
-      -- Could probably be a bit cleaner
-      if firstPlayer == model.userId then
-        ({ model
-            | failedNetReq = 0
-            , joinState = Playing
-            , players = players
-            , turnOrder = 1
-            , currentTurn = currentTurn
-            , board = List.map pieceFromString boardStringy
-        }, Cmd.none )
-      else if secondPlayer == model.userId then
-        ({ model
-            | failedNetReq = 0
-            , joinState = Playing
-            , players = players
-            , turnOrder = 2
-            , currentTurn = currentTurn
-            , board = List.map pieceFromString boardStringy
-        }, Cmd.none )
-      else if firstPlayer == "" then
-        let newModel = 
-              { model
-                | players = [ model.userId, secondPlayer ]
-                , turnOrder = 1
-              }
-        in
-        ( newModel, Http.post
-              { url = url
-              , body = Http.jsonBody (encodeStateJson newModel)
-              , expect = Http.expectWhatever RoomJoined
-              }
-        )
-      else if secondPlayer == "" then
-        let newModel =
-              { model
-                | players = [ firstPlayer, model.userId ]
-                , turnOrder = 2
-              }
-        in
-        ( newModel , Http.post
-              { url = url
-              , body = Http.jsonBody (encodeStateJson newModel)
-              , expect = Http.expectWhatever RoomJoined
-              }
-        )
-      else
-        ( { model | error = Just "Room appears to already be full" }
-        , Cmd.none
-        )
-    RoomReceived (Err e) ->
-      ( { model | error = Just ("Failed to join room." ++ netErrToString e) }
-      , Cmd.none
-      )
-    RoomJoined (Ok _) ->
-      case model.roomCode of
-        Just rm ->
-          ( { model | joinState = Playing }
-          , Nav.replaceUrl key ("#" ++ rm)
-          )
-        _ ->
-          ( model, Cmd.none ) -- IMPOSSIBLE
-    RoomJoined (Err e) ->
-      ( { model | error = Just ("Failed to join room." ++ netErrToString e) }
-      , Cmd.none
-      )
-    Tick _ ->
-      if not
-        ( model.joinState == Playing
-        || model.joinState == WaitingOpponent
-        )
-      then
-        ( model, Cmd.none )
-      else if model.gameType /= Just Network then
-        ( model, Cmd.none )
-      else if model.failedNetReq >= 5 then
-        ( model, Cmd.none )
-      else
-        case model.roomCode of
-          Just rm ->
-            let url = "/rooms/" ++ rm ++ ".json" in
-            ( model
-            , Http.get
-                { url = url
-                , expect = Http.expectJson UpdateGameState decodeStateJson
-                }
-            )
-          Nothing ->
-            ( model, Cmd.none ) -- IMPOSSIBLE
-    UpdateGameState (Ok {players, currentTurn, boardStringy}) ->
-      let newJoinState =
-            if List.member "" players then
-              model.joinState
-            else
-              Playing
-      in
-      ( { model
-            | failedNetReq = 0
-            , joinState = newJoinState
-            , players = players
-            , currentTurn = currentTurn
-            , board = List.map pieceFromString boardStringy
-        }, Cmd.none )
-    UpdateGameState (Err e) ->
-      if model.failedNetReq <= 5 then
-        ( { model | failedNetReq = model.failedNetReq + 1 }, Cmd.none )
-      else
-        ( { model | error = Just ("Network failure." ++ netErrToString e) }
-        , Cmd.none )
     SelectPiece pce ->
       ( { model | selected = Just pce }, Cmd.none )
     DeselectPiece ->
@@ -430,31 +201,9 @@ update msg ({key, board, selected} as model) =
                     , currentTurn = nextTurn
                 }
           in
-          case model.gameType of
-            Just Network ->
-              case model.roomCode of
-                Just rm ->
-                  let url = "/rooms/" ++ rm ++ ".json" in
-                  ( newModel, Http.post
-                      { url = url
-                      , body = Http.jsonBody (encodeStateJson newModel)
-                      , expect = Http.expectWhatever GameStateSent
-                      }
-                  )
-                      
-                Nothing ->
-                  ( model, Cmd.none) --> IMPOSSIBLE
-            _ ->
-              ( newModel, Cmd.none )
+          ( newModel, Cmd.none )
         Nothing ->
           ( model , Cmd.none ) -- IMPOSSIBLE
-    GameStateSent (Ok _) ->
-      ( model, Cmd.none ) -- Successful noop
-    GameStateSent (Err e) ->
-      ( { model | error = Just ("""
-            Move failed due to network error. Please reload page and try again.
-            Error was""" ++ (netErrToString e))
-        }, Cmd.none )
 
 netErrToString : Http.Error -> String
 netErrToString err =
@@ -545,15 +294,6 @@ view model =
             Nothing -> text "*No piece selected*"
         ]
     ]
-    ++
-    case model.error of
-      Just err -> [ viewError err ]
-      Nothing ->
-        case model.joinState of
-          GameTypeSelection -> [ gameSelection model ]
-          Lobby -> [ lobby model ]
-          WaitingOpponent -> [ waitingOpponent model ]
-          Playing -> []
   }
 
 turnInfo : Model -> Html Msg
@@ -580,34 +320,6 @@ turnInfo model =
           p [] [ text "IMPOSSIBLE STATE REACHED" ]
     _ ->
       p [] [ text "Game not in progress" ]
-
-viewError : String -> Html Msg
-viewError err =
-  modal
-    [ p [] [ text "ERROR:" ]
-    , p [] [ text err ]
-    , button [ onClick ReloadPage ] [ text "Reload page" ]
-    ]
-
-gameSelection : Model -> Html Msg
-gameSelection model =
-  modal
-    [ p [] [ text "Please select a game type:" ]
-    , button [ onClick (SelectGame Network) ] [ text "1v1 Network" ]
-    , button [ onClick (SelectGame Local) ] [ text "1v1 Local" ]
-    , button [ onClick (SelectGame AI) ] [ text "1vAI" ]
-    ]
-
-lobby : Model -> Html Msg
-lobby model =
-  modal
-    [ p [] [ text "Join or create a room:" ]
-    , p [] [ button [ onClick CreateRoom ] [ text "Create a new room" ] ]
-    , p []
-        [ input [ placeholder "Enter room id...", onInput Input ] []
-        , button [ onClick (JoinRoom model.input) ] [ text "Join room" ]
-        ]
-    ]
 
 waitingOpponent : Model -> Html Msg
 waitingOpponent model =
