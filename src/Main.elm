@@ -115,8 +115,8 @@ type Msg
   | SelectGameType GameTypeMsg
   | Tick Time.Posix
   | RoomMsg RmMsg
---  | UpdateGameState (Result Http.Error GameState)
---  | GameStateSent (Result Http.Error ())
+  | UpdateGameState (Result Http.Error GameState)
+  | GameStateSent (Result Http.Error ())
   | GameMsg Xiangqi.Msg
 
 type RmMsg
@@ -157,30 +157,21 @@ update msg ({key} as model) =
               , gameState = Xiangqi.init Playing Local 1
             }, Cmd.none )
     Tick _ ->
-      ( model, Cmd.none )
-{-
-      if not
-        ( model.joinState == NowPlaying
-        || model.joinState == WaitingOpponent
-        )
-      then
-        ( model, Cmd.none )
-      else if model.gameType /= Just Network then
-        ( model, Cmd.none )
-      else if model.failedNetReq >= 5 then
-        ( model, Cmd.none )
-      else
-        case model.roomCode of
-          Just rm ->
-            let url = "/rooms/" ++ rm ++ ".json" in
-            ( model
-            , Http.get
-                { url = url
-                , expect = Http.expectJson UpdateGameState decodeStateJson
-                }
-            )
-          Nothing ->
-            ( model, Cmd.none ) -- IMPOSSIBLE
+      case model.gameType of
+        NetworkGame { roomCode } ->
+          case roomCode of
+            Just rm ->
+              let url = "/rooms/" ++ rm ++ ".json" in
+              ( model
+              , Http.get
+                  { url = url
+                  , expect = Http.expectJson UpdateGameState decodeStateJson
+                  }
+              )
+            Nothing ->
+              ( model, Cmd.none )
+        _ ->
+          ( model, Cmd.none )
     GameStateSent (Ok _) ->
       ( model, Cmd.none ) -- Successful noop
     GameStateSent (Err e) ->
@@ -188,10 +179,8 @@ update msg ({key} as model) =
             Move failed due to network error. Please reload page and try again.
             Error was""" ++ (netErrToString e))
         }, Cmd.none )
--- XXX ???
     UpdateGameState _ ->
       ( model, Cmd.none )
--}
     RoomMsg subMsg ->
       case model.gameType of
         NetworkGame room ->
@@ -374,32 +363,6 @@ view model =
               WaitingOpponent -> [ waitingOpponent model ]
               NowPlaying -> []
   }
-
-turnInfo : Model -> Html Msg
-turnInfo model =
-  p [] [ text "Game not in progress" ]
-{-
-  let color = case model.turnOrder of
-        1 -> "Red"
-        _ -> "Black"
-  in
-  case model.joinState of
-    NowPlaying ->
-      case model.gameType of
-        Just Network ->
-          if model.currentTurn == model.turnOrder then
-            p [] [ text ("You are " ++ color ++ ". It is your turn") ]
-          else
-            p [] [ text ("You are " ++ color ++ ". Waiting for opponent") ]
-        Just Local ->
-          case model.currentTurn of
-            1 -> p [] [ text "Red players turn" ]
-            _ -> p [] [ text "Black players turn" ]
-        Nothing ->
-          p [] [ text "IMPOSSIBLE STATE REACHED" ]
-    _ ->
-      p [] [ text "Game not in progress" ]
--}
 
 viewError : String -> Html Msg
 viewError err =
