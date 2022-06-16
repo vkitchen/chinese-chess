@@ -16,6 +16,7 @@ import Http
 import Json.Decode as D
 import Json.Encode as E
 
+import Lib exposing (..)
 import Xiangqi
 
 gameName = "chinese chess" -- Used for room brokering
@@ -27,7 +28,7 @@ imgUrl : String -> String
 imgUrl u =
   "url('" ++ imgPath ++ u ++ "')"
 
-type JoinState = Lobby | WaitingOpponent | Playing
+type JoinState = WaitingLobby | WaitingOpponent | NowPlaying
 type alias Room =
   { roomCode : Maybe String
   , joinState : JoinState
@@ -67,14 +68,13 @@ type alias GameState =
 -- Uid is a flag from JS. It is a unique per-browser user code in a cookie
 init : String -> Url -> Nav.Key -> ( Model, Cmd Msg )
 init uid url key =
-  let (subModel, _) = Xiangqi.init uid url key in
   let defaultModel =
         { error = Nothing
         , failedNetReq = 0
         , key = key
         , userId = uid
         , gameType = NoGameType
-        , gameState = subModel
+        , gameState = Xiangqi.init Lobby Local 1
         }
   in
   -- Specialisation of JoinRoom update method
@@ -87,7 +87,7 @@ init uid url key =
         ( { defaultModel
               | gameType = NetworkGame
                   { roomCode = Just roomCode
-                  , joinState = Lobby
+                  , joinState = WaitingLobby
                   , inputRoomCode = ""
                   , players = []
                   , turnOrder = 0
@@ -142,7 +142,7 @@ update msg ({key} as model) =
           ( { model
               | gameType = NetworkGame
                 { roomCode = Nothing
-                , joinState = Lobby
+                , joinState = WaitingLobby
                 , inputRoomCode = ""
                 , players = []
                 , turnOrder = 0
@@ -157,7 +157,7 @@ update msg ({key} as model) =
       ( model, Cmd.none )
 {-
       if not
-        ( model.joinState == Playing
+        ( model.joinState == NowPlaying
         || model.joinState == WaitingOpponent
         )
       then
@@ -264,14 +264,14 @@ updateRoom msg model room =
       -- Could probably be a bit cleaner
       if firstPlayer == model.userId then
         ( Ok { room
-            | joinState = Playing
+            | joinState = NowPlaying
             , players = players
             , turnOrder = 1
             , currentTurn = currentTurn
         }, Cmd.none )
       else if secondPlayer == model.userId then
         ( Ok { room
-            | joinState = Playing
+            | joinState = NowPlaying
             , players = players
             , turnOrder = 2
             , currentTurn = currentTurn
@@ -309,7 +309,7 @@ updateRoom msg model room =
     RoomJoined (Ok _) ->
       case room.roomCode of
         Just rm ->
-          ( Ok { room | joinState = Playing }
+          ( Ok { room | joinState = NowPlaying }
           , Nav.replaceUrl model.key ("#" ++ rm)
           )
         _ ->
@@ -367,9 +367,9 @@ view model =
           LocalGame _ -> []
           NetworkGame {joinState} ->
             case joinState of
-              Lobby -> [ lobby ]
+              WaitingLobby -> [ lobby ]
               WaitingOpponent -> [ waitingOpponent model ]
-              Playing -> []
+              NowPlaying -> []
   }
 
 turnInfo : Model -> Html Msg
@@ -381,7 +381,7 @@ turnInfo model =
         _ -> "Black"
   in
   case model.joinState of
-    Playing ->
+    NowPlaying ->
       case model.gameType of
         Just Network ->
           if model.currentTurn == model.turnOrder then

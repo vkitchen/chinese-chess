@@ -16,6 +16,8 @@ import Http
 import Json.Decode as D
 import Json.Encode as E
 
+import Lib exposing (..)
+
 type Color = Red | Black
 type PieceType =
   Advisor | Cannon | Chariot | Elephant | General | Horse | Soldier
@@ -76,50 +78,33 @@ pieceFromString pce =
     _ ->
       Piece Red Soldier 'a' 1 -- IMPOSSIBLE
 
-type GameType = Network | Local | AI
-type JoinState = GameTypeSelection | Lobby | WaitingOpponent | Playing
-
 rootPath = "/games/chinese-chess/"
 imgPath = "static/img/"
 
 type alias Model =
-  { error : Maybe String
-  , failedNetReq : Int
-  , key : Nav.Key
-  , userId : String
-  , gameType : Maybe GameType
-  , joinState : JoinState
-  , roomCode : Maybe String
+  { joinState : JoinState
+  , gameType : GameType
+  , whensMyTurn : Int
+  , whosTurnNow : Int
   , board : List Piece
-  , players : List String
-  , turnOrder : Int
-  , currentTurn : Int
   , selected : Maybe Piece
-  , input : String
   }
 
 type alias GameState =
   { players: List String
-  , currentTurn : Int
+  , whosTurnNow : Int
   , boardStringy: List String
   }
 
-init : String -> Url -> Nav.Key -> ( Model, Cmd Msg )
-init uid url key =
-  ( { error = Nothing
-  , failedNetReq = 0
-  , key = key
-  , userId = uid
-  , gameType = Just Local
-  , joinState = Playing
-  , roomCode = Nothing
+init : JoinState -> GameType -> Int -> Model
+init joinState gameType myTurn =
+  { joinState = joinState
+  , gameType = gameType
+  , whensMyTurn = myTurn
+  , whosTurnNow = 1
   , board = initialBoard
-  , players = []
-  , turnOrder = 1
-  , currentTurn = 1
   , selected = Nothing
-  , input = ""
-  }, Cmd.none )
+  }
 
 initialBoard : List Piece
 initialBoard =
@@ -173,7 +158,7 @@ type Msg
   | MovePiece Piece
 
 update : Msg -> Model -> ( Model, Cmd Msg )
-update msg ({key, board, selected} as model) =
+update msg ({board, selected} as model) =
   case msg of
     NoOp ->
       ( model, Cmd.none )
@@ -190,7 +175,7 @@ update msg ({key, board, selected} as model) =
                 (\(Piece _ _ f_ r_) -> not (f == f_ && r == r_)) board
           in
           let newBoard_ = List.filter (\p -> p /= pce) newBoard ++ [pce_] in
-          let nextTurn = case model.currentTurn of
+          let nextTurn = case model.whosTurnNow of
                 1 -> 2
                 _ -> 1
           in
@@ -198,13 +183,13 @@ update msg ({key, board, selected} as model) =
                 { model
                     | board = newBoard_
                     , selected = Nothing
-                    , currentTurn = nextTurn
+                    , whosTurnNow = nextTurn
                 }
           in
           ( newModel, Cmd.none )
         Nothing ->
           ( model , Cmd.none ) -- IMPOSSIBLE
-
+{-
 netErrToString : Http.Error -> String
 netErrToString err =
   case err of
@@ -221,16 +206,17 @@ decodeStateJson : D.Decoder (GameState)
 decodeStateJson =
   D.map3 GameState
     (D.field "players" (D.list D.string))
-    (D.field "currentTurn" D.int)
+    (D.field "whosTurnNow" D.int)
     (D.field "gameState" (D.list D.string))
 
 encodeStateJson : Model -> E.Value
-encodeStateJson {players, currentTurn, board} =
+encodeStateJson {players, whosTurnNow, board} =
   E.object
     [ ( "players", E.list E.string players )
-    , ( "currentTurn", E.int currentTurn )
+    , ( "whosTurnNow", E.int whosTurnNow )
     , ( "gameState", E.list E.string (List.map pieceToString board))
     ]
+-}
 
 -- XXX
 rotateBoard : List Piece -> List Piece
@@ -270,40 +256,26 @@ view model =
 
 turnInfo : Model -> Html Msg
 turnInfo model =
-  let color = case model.turnOrder of
+  let color = case model.whensMyTurn of
         1 -> "Red"
         _ -> "Black"
   in
   case model.joinState of
     Playing ->
       case model.gameType of
-        Just Network ->
-          if model.currentTurn == model.turnOrder then
+        Network ->
+          if model.whosTurnNow == model.whensMyTurn then
             p [] [ text ("You are " ++ color ++ ". It is your turn") ]
           else
             p [] [ text ("You are " ++ color ++ ". Waiting for opponent") ]
-        Just Local ->
-          case model.currentTurn of
+        Local ->
+          case model.whosTurnNow of
             1 -> p [] [ text "Red players turn" ]
             _ -> p [] [ text "Black players turn" ]
-        Just AI ->
+        AI ->
           p [] [ text "Not yet implemented" ]
-        Nothing ->
-          p [] [ text "IMPOSSIBLE STATE REACHED" ]
     _ ->
       p [] [ text "Game not in progress" ]
-
-waitingOpponent : Model -> Html Msg
-waitingOpponent model =
-  let roomCode = case model.roomCode of
-        Just rmCd -> rmCd
-        Nothing -> ""
-  in
-  modal
-    [ p [] [ text "Waiting for opponent to join" ]
-    , p [] [ text "Copy the url or room code to send them" ]
-    , p [] [ text ("Room code: " ++ roomCode) ]
-    ]
 
 modal : List (Html Msg) -> Html Msg
 modal children =
@@ -385,22 +357,20 @@ viewPiece : Model -> Piece -> Html Msg
 viewPiece model (Piece color pceType file rank as pce) =
   let allowedSelection =
         case model.gameType of
-          Just Network ->
-            if model.currentTurn == model.turnOrder then
-              case model.turnOrder of
+          Network ->
+            if model.whensMyTurn == model.whosTurnNow then
+              case model.whosTurnNow of
                 1 -> Just Red
                 2 -> Just Black
                 _ -> Nothing
             else
               Nothing
-          Just Local ->
-            case model.currentTurn of
+          Local ->
+            case model.whosTurnNow of
               1 -> Just Red
               2 -> Just Black
               _ -> Nothing
-          Just AI ->
-            Nothing
-          Nothing ->
+          AI ->
             Nothing
   in
   let isSelected = model.selected == Just pce in
