@@ -152,7 +152,10 @@ update msg ({key} as model) =
           , Random.generate (RoomMsg << DetermineTurnOrder) (Random.int 1 2)
           )
         SelectLocal ->
-          ( { model | gameType = LocalGame 1 }, Cmd.none )
+          ( { model
+              | gameType = LocalGame 1
+              , gameState = Xiangqi.init Playing Local 1
+            }, Cmd.none )
     Tick _ ->
       ( model, Cmd.none )
 {-
