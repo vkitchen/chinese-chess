@@ -81,16 +81,32 @@ pieceFromString pce =
 rootPath = "/games/chinese-chess/"
 imgPath = "static/img/"
 
-type alias Board = List String
+type alias Board =
+  { board : List String
+  , whosTurnNow : Int
+  }
 
-decoder = D.list D.string
-encoder = E.list E.string
+decoder =
+  D.map2 Board
+    (D.field "board" (D.list D.string))
+    (D.field "whosTurnNow" D.int)
+
+encoder board =
+  E.object
+    [ ( "board", E.list E.string board.board )
+    , ( "whosTurnNow", E.int board.whosTurnNow )
+    ]
 
 networkFromModel model =
-  List.map pieceToString model.board
+  { board = List.map pieceToString model.board
+  , whosTurnNow = model.whosTurnNow
+  }
 
 boardFromNetwork model board =
-  { model | board = List.map pieceFromString board }
+  { model
+      | board = List.map pieceFromString board.board
+      , whosTurnNow = board.whosTurnNow
+  }
 
 type alias Model =
   { joinState : JoinState
