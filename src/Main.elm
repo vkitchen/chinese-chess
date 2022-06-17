@@ -181,22 +181,33 @@ update msg ({key} as model) =
             Error was""" ++ (netErrToString e))
         }, Cmd.none )
     UpdateGameState (Ok {players, currentTurn, gameState}) ->
+      let ( previousJoinState, turn ) =
+            case model.gameType of
+              NetworkGame { joinState, turnOrder } -> ( joinState, turnOrder )
+              _ -> ( WaitingOpponent, 0 ) -- IMPOSSIBLE
+      in
+      let newJoinState =
+            if List.member "" players then
+              previousJoinState
+            else
+              NowPlaying
+      in
       ( { model
             | failedNetReq = 0
             , gameType = case model.gameType of
                 NetworkGame room ->
                   NetworkGame { room
-                      | joinState =
-                          if List.member "" players then
-                            room.joinState
-                          else
-                            NowPlaying
+                      | joinState = newJoinState
                       , players = players
                       , currentTurn = currentTurn
                   }
                 _ ->
                   model.gameType
-            , gameState = Xiangqi.boardFromNetwork model.gameState gameState
+            , gameState =
+                if newJoinState /= previousJoinState then
+                  Xiangqi.init Playing Network turn
+                else
+                  Xiangqi.boardFromNetwork model.gameState gameState
         }, Cmd.none )
     UpdateGameState (Err e) ->
       if model.failedNetReq <= 5 then
@@ -297,14 +308,14 @@ updateRoom msg model room =
       -- Could probably be a bit cleaner
       if firstPlayer == model.userId then
         ( Ok { room
-            | joinState = NowPlaying
+            | joinState = WaitingOpponent -- Hack to init model
             , players = players
             , turnOrder = 1
             , currentTurn = currentTurn
         }, Cmd.none )
       else if secondPlayer == model.userId then
         ( Ok { room
-            | joinState = NowPlaying
+            | joinState = WaitingOpponent -- Hack to init model
             , players = players
             , turnOrder = 2
             , currentTurn = currentTurn
@@ -342,7 +353,7 @@ updateRoom msg model room =
     RoomJoined (Ok _) ->
       case room.roomCode of
         Just rm ->
-          ( Ok { room | joinState = NowPlaying }
+          ( Ok { room | joinState = WaitingOpponent } -- Hack to init model
           , Nav.replaceUrl model.key ("#" ++ rm)
           )
         _ ->
