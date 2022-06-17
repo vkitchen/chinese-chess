@@ -1,4 +1,4 @@
-module Xiangqi exposing (Model, Msg, init, update, view)
+module Xiangqi exposing (Board, Model, Msg, boardFromNetwork, decoder, encoder, init, networkFromModel, update, view)
 
 import Browser exposing (Document, UrlRequest)
 import Browser.Navigation as Nav
@@ -81,6 +81,17 @@ pieceFromString pce =
 rootPath = "/games/chinese-chess/"
 imgPath = "static/img/"
 
+type alias Board = List String
+
+decoder = D.list D.string
+encoder = E.list E.string
+
+networkFromModel model =
+  List.map pieceToString model.board
+
+boardFromNetwork model board =
+  { model | board = List.map pieceFromString board }
+
 type alias Model =
   { joinState : JoinState
   , gameType : GameType
@@ -157,15 +168,15 @@ type Msg
   | DeselectPiece
   | MovePiece Piece
 
-update : Msg -> Model -> ( Model, Cmd Msg )
+update : Msg -> Model -> ( Model, Bool )
 update msg ({board, selected} as model) =
   case msg of
     NoOp ->
-      ( model, Cmd.none )
+      ( model, False )
     SelectPiece pce ->
-      ( { model | selected = Just pce }, Cmd.none )
+      ( { model | selected = Just pce }, False )
     DeselectPiece ->
-      ( { model | selected = Nothing }, Cmd.none )
+      ( { model | selected = Nothing }, False )
     MovePiece (Piece _ _ f r as pce_) ->
       case selected of
         Just pce ->
@@ -186,9 +197,9 @@ update msg ({board, selected} as model) =
                     , whosTurnNow = nextTurn
                 }
           in
-          ( newModel, Cmd.none )
+          ( newModel, True )
         Nothing ->
-          ( model , Cmd.none ) -- IMPOSSIBLE
+          ( model, False ) -- IMPOSSIBLE
 {-
 netErrToString : Http.Error -> String
 netErrToString err =

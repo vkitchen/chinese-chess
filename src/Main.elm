@@ -63,6 +63,7 @@ type alias GameState =
   { game: String
   , players: List String
   , currentTurn : Int
+  , gameState : Xiangqi.Board
   }
 
 -- Uid is a flag from JS. It is a unique per-browser user code in a cookie
@@ -131,7 +132,7 @@ type RmMsg
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg ({key} as model) =
-  case Debug.log "msg" msg of
+  case msg of
     NoOp ->
       ( model, Cmd.none )
     ReloadPage ->
@@ -179,7 +180,7 @@ update msg ({key} as model) =
             Move failed due to network error. Please reload page and try again.
             Error was""" ++ (netErrToString e))
         }, Cmd.none )
-    UpdateGameState (Ok {players, currentTurn}) ->
+    UpdateGameState (Ok {players, currentTurn, gameState}) ->
       ( { model
             | failedNetReq = 0
             , gameType = case model.gameType of
@@ -195,7 +196,7 @@ update msg ({key} as model) =
                   }
                 _ ->
                   model.gameType
---            , board = List.map pieceFromString boardStringy
+            , gameState = Xiangqi.boardFromNetwork model.gameState gameState
         }, Cmd.none )
     UpdateGameState (Err e) ->
       if model.failedNetReq <= 5 then
@@ -212,8 +213,26 @@ update msg ({key} as model) =
             Err e -> ( { model | error = Just e }, cmd )
         _ -> ( model, Cmd.none )
     GameMsg subMsg ->
-      let (model_, cmd) = Xiangqi.update subMsg model.gameState in
-      ( { model | gameState = model_ }, Cmd.none )
+      let (model_, sendState) = Xiangqi.update subMsg model.gameState in
+      ( { model | gameState = model_ }
+      , if sendState then
+          case model.gameType of
+            NetworkGame { roomCode } ->
+              case roomCode of
+                Just rm ->
+                  let url = "/rooms/" ++ rm ++ ".json" in
+                  Http.post
+                    { url = url
+                    , body = Http.jsonBody (encodeStateJson { model | gameState = model_ } )
+                    , expect = Http.expectWhatever GameStateSent
+                    }
+                Nothing ->
+                  Cmd.none
+            _ ->
+              Cmd.none
+        else
+          Cmd.none
+      )
 
 updateRoom : RmMsg -> Model -> Room -> ( Result String Room, Cmd Msg )
 updateRoom msg model room =
@@ -345,10 +364,11 @@ netErrToString err =
 
 decodeStateJson : D.Decoder (GameState)
 decodeStateJson =
-  D.map3 GameState
+  D.map4 GameState
     (D.field "game" D.string)
     (D.field "players" (D.list D.string))
     (D.field "currentTurn" D.int)
+    (D.field "gameState" Xiangqi.decoder)
 
 encodeStateJson : Model -> E.Value
 encodeStateJson model =
@@ -358,7 +378,7 @@ encodeStateJson model =
         [ ( "game", E.string gameName )
         , ( "players", E.list E.string room.players )
         , ( "currentTurn", E.int room.currentTurn )
-    -- , ( "gameState", E.list E.string (List.map pieceToString board))
+        , ( "gameState", Xiangqi.encoder (Xiangqi.networkFromModel model.gameState))
         ]
     _ ->
       E.object []
