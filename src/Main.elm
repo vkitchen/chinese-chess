@@ -131,7 +131,7 @@ type RmMsg
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg ({key} as model) =
-  case msg of
+  case Debug.log "msg" msg of
     NoOp ->
       ( model, Cmd.none )
     ReloadPage ->
@@ -179,8 +179,30 @@ update msg ({key} as model) =
             Move failed due to network error. Please reload page and try again.
             Error was""" ++ (netErrToString e))
         }, Cmd.none )
-    UpdateGameState _ ->
-      ( model, Cmd.none )
+    UpdateGameState (Ok {players, currentTurn}) ->
+      ( { model
+            | failedNetReq = 0
+            , gameType = case model.gameType of
+                NetworkGame room ->
+                  NetworkGame { room
+                      | joinState =
+                          if List.member "" players then
+                            room.joinState
+                          else
+                            NowPlaying
+                      , players = players
+                      , currentTurn = currentTurn
+                  }
+                _ ->
+                  model.gameType
+--            , board = List.map pieceFromString boardStringy
+        }, Cmd.none )
+    UpdateGameState (Err e) ->
+      if model.failedNetReq <= 5 then
+        ( { model | failedNetReq = model.failedNetReq + 1 }, Cmd.none )
+      else
+        ( { model | error = Just ("Network failure." ++ netErrToString e) }
+        , Cmd.none )
     RoomMsg subMsg ->
       case model.gameType of
         NetworkGame room ->
@@ -357,10 +379,13 @@ view model =
         case model.gameType of
           NoGameType -> [ gameSelection model ]
           LocalGame _ -> []
-          NetworkGame {joinState} ->
+          NetworkGame {joinState, roomCode} ->
             case joinState of
               WaitingLobby -> [ lobby ]
-              WaitingOpponent -> [ waitingOpponent model ]
+              WaitingOpponent ->
+                case roomCode of
+                  Just room -> [ waitingOpponent room ]
+                  Nothing -> []
               NowPlaying -> []
   }
 
@@ -391,20 +416,13 @@ lobby =
         ]
     ]
 
-waitingOpponent : Model -> Html Msg
-waitingOpponent model =
-  p [] [ text "Broken" ]
-{-
-  let roomCode = case model.roomCode of
-        Just rmCd -> rmCd
-        Nothing -> ""
-  in
+waitingOpponent : String -> Html Msg
+waitingOpponent room =
   modal
     [ p [] [ text "Waiting for opponent to join" ]
     , p [] [ text "Copy the url or room code to send them" ]
-    , p [] [ text ("Room code: " ++ roomCode) ]
+    , p [] [ text ("Room code: " ++ room) ]
     ]
--}
 
 modal : List (Html Msg) -> Html Msg
 modal children =
