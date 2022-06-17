@@ -19,7 +19,7 @@ import Json.Encode as E
 import Lib exposing (..)
 import Xiangqi
 
-gameName = "chinese chess" -- Used for room brokering
+gameSlug = "chinese-chess" -- Used for room brokering
 pageTitle = "Chinese Chess - Vaughan.Kitchen"
 rootPath = "/games/chinese-chess/"
 imgPath = rootPath ++ "static/img/"
@@ -386,7 +386,7 @@ encodeStateJson model =
   case model.gameType of
     NetworkGame room ->
       E.object
-        [ ( "game", E.string gameName )
+        [ ( "game", E.string gameSlug )
         , ( "players", E.list E.string room.players )
         , ( "currentTurn", E.int room.currentTurn )
         , ( "gameState", Xiangqi.encoder (Xiangqi.networkFromModel model.gameState))
