@@ -83,43 +83,43 @@ imgPath = "static/img/"
 
 type alias Board =
   { board : List String
-  , whosTurnNow : Int
+  , whoseTurnNow : Int
   }
 
 decoder =
   D.map2 Board
     (D.field "board" (D.list D.string))
-    (D.field "whosTurnNow" D.int)
+    (D.field "whoseTurnNow" D.int)
 
 encoder board =
   E.object
     [ ( "board", E.list E.string board.board )
-    , ( "whosTurnNow", E.int board.whosTurnNow )
+    , ( "whoseTurnNow", E.int board.whoseTurnNow )
     ]
 
 networkFromModel model =
   { board = List.map pieceToString model.board
-  , whosTurnNow = model.whosTurnNow
+  , whoseTurnNow = model.whoseTurnNow
   }
 
 boardFromNetwork model board =
   { model
       | board = List.map pieceFromString board.board
-      , whosTurnNow = board.whosTurnNow
+      , whoseTurnNow = board.whoseTurnNow
   }
 
 type alias Model =
   { joinState : JoinState
   , gameType : GameType
   , whensMyTurn : Int
-  , whosTurnNow : Int
+  , whoseTurnNow : Int
   , board : List Piece
   , selected : Maybe Piece
   }
 
 type alias GameState =
   { players: List String
-  , whosTurnNow : Int
+  , whoseTurnNow : Int
   , boardStringy: List String
   }
 
@@ -128,7 +128,7 @@ init joinState gameType myTurn =
   { joinState = joinState
   , gameType = gameType
   , whensMyTurn = myTurn
-  , whosTurnNow = 1
+  , whoseTurnNow = 1
   , board = initialBoard
   , selected = Nothing
   }
@@ -202,7 +202,7 @@ update msg ({board, selected} as model) =
                 (\(Piece _ _ f_ r_) -> not (f == f_ && r == r_)) board
           in
           let newBoard_ = List.filter (\p -> p /= pce) newBoard ++ [pce_] in
-          let nextTurn = case model.whosTurnNow of
+          let nextTurn = case model.whoseTurnNow of
                 1 -> 2
                 _ -> 1
           in
@@ -210,7 +210,7 @@ update msg ({board, selected} as model) =
                 { model
                     | board = newBoard_
                     , selected = Nothing
-                    , whosTurnNow = nextTurn
+                    , whoseTurnNow = nextTurn
                 }
           in
           ( newModel, True )
@@ -233,14 +233,14 @@ decodeStateJson : D.Decoder (GameState)
 decodeStateJson =
   D.map3 GameState
     (D.field "players" (D.list D.string))
-    (D.field "whosTurnNow" D.int)
+    (D.field "whoseTurnNow" D.int)
     (D.field "gameState" (D.list D.string))
 
 encodeStateJson : Model -> E.Value
-encodeStateJson {players, whosTurnNow, board} =
+encodeStateJson {players, whoseTurnNow, board} =
   E.object
     [ ( "players", E.list E.string players )
-    , ( "whosTurnNow", E.int whosTurnNow )
+    , ( "whoseTurnNow", E.int whoseTurnNow )
     , ( "gameState", E.list E.string (List.map pieceToString board))
     ]
 -}
@@ -291,12 +291,12 @@ turnInfo model =
     Playing ->
       case model.gameType of
         Network ->
-          if model.whosTurnNow == model.whensMyTurn then
+          if model.whoseTurnNow == model.whensMyTurn then
             p [] [ text ("You are " ++ color ++ ". It is your turn") ]
           else
             p [] [ text ("You are " ++ color ++ ". Waiting for opponent") ]
         Local ->
-          case model.whosTurnNow of
+          case model.whoseTurnNow of
             1 -> p [] [ text "Red players turn" ]
             _ -> p [] [ text "Black players turn" ]
         AI ->
@@ -385,15 +385,15 @@ viewPiece model (Piece color pceType file rank as pce) =
   let allowedSelection =
         case model.gameType of
           Network ->
-            if model.whensMyTurn == model.whosTurnNow then
-              case model.whosTurnNow of
+            if model.whensMyTurn == model.whoseTurnNow then
+              case model.whoseTurnNow of
                 1 -> Just Red
                 2 -> Just Black
                 _ -> Nothing
             else
               Nothing
           Local ->
-            case model.whosTurnNow of
+            case model.whoseTurnNow of
               1 -> Just Red
               2 -> Just Black
               _ -> Nothing
